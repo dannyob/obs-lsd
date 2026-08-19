@@ -40,3 +40,14 @@ def test_render_deterministic_and_time_varying(ellipse_mask):
 def test_render_empty_mask_returns_black():
     out = HaloRenderer().render(np.zeros((90, 160), np.float32), 0.0)
     assert out.max() == 0.0
+
+
+def test_render_tiny_mask_returns_black_not_nan():
+    # a single full-res pixel can vanish under downscale + 0.5 threshold,
+    # leaving an empty binary mask -- must not NaN out via xs.mean() on
+    # an empty array.
+    mask = np.zeros((10, 10), np.float32)
+    mask[5, 5] = 1
+    out = HaloRenderer().render(mask, 0.5)
+    assert out.max() == 0.0
+    assert not np.isnan(out).any()

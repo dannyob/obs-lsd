@@ -64,14 +64,18 @@ class HaloRenderer:
         if m.max() <= 0.0:
             return np.zeros((H, W, 3), np.float32)
         binary = (m > 0.5).astype(np.uint8)
+        ys, xs = np.nonzero(binary)
+        if xs.size == 0:
+            # mask survived the m.max() check but vanished under downscale +
+            # 0.5 threshold (e.g. a single full-res pixel) -- nothing to draw
+            return np.zeros((H, W, 3), np.float32)
         # distance (in full-res px) from the head contour, outward
         dist = cv2.distanceTransform(1 - binary, cv2.DIST_L2, 3).astype(np.float32) / s
-        ys, xs = np.nonzero(binary)
-        cx, cy = xs.mean(), ys.mean()
+        cx, cy = np.float32(xs.mean()), np.float32(ys.mean())
         yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
         theta = np.arctan2(yy - cy, xx - cx)  # -pi..pi
         # texture lookup: angle wraps around TEX_W, radius scrolls with time
-        map_x = (((theta / (2 * np.pi) + 0.5) * self.TEX_W) % self.TEX_W).astype(np.float32)
+        map_x = ((theta / (2 * np.pi) + 0.5) * self.TEX_W) % self.TEX_W
         map_y = (
             (dist * (self.TEX_H / self.p.reach)) - t * self.p.speed * (self.TEX_H / self.p.reach)
         ) % self.TEX_H
@@ -85,7 +89,7 @@ class HaloRenderer:
         # angular fine detail: multiply by a second, denser lookup
         n_fine = cv2.remap(
             self.tex[(i0 + 3) % self.TEX_N],
-            ((map_x * self.p.density / 8.0) % self.TEX_W).astype(np.float32),
+            (map_x * self.p.density / 8.0) % self.TEX_W,
             map_y,
             cv2.INTER_LINEAR,
             borderMode=cv2.BORDER_WRAP,
