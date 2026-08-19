@@ -42,6 +42,12 @@ camera and a preview window. Options:
   `--halo-hue-speed`, `--halo-spill`, `--halo-scale` -- tune the halo; see `HaloParams` in
   `src/obs_lsd/halo.py` for what each does and its default.
 
+If Zoom lists "OBS Virtual Camera" but shows only black, check that OBS
+itself is not running: only one program can feed the virtual camera at a
+time, and an open OBS (with its Virtual Camera started) wins, sending its
+own — usually empty — scene. Quit OBS, restart `obs-lsd`, and re-select the
+camera in Zoom.
+
 With the preview window focused, these keys work live:
 
 - `q` or Esc -- quit
