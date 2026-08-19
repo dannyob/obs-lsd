@@ -28,6 +28,9 @@ from obs_lsd.pipeline import Pipeline, PipelineConfig
 @click.option("--halo-reach", default=HaloParams.reach, show_default=True)
 @click.option("--halo-density", default=HaloParams.density, show_default=True)
 @click.option("--halo-speed", default=HaloParams.speed, show_default=True)
+@click.option(
+    "--halo-rotate", default=HaloParams.rotate, show_default=True, help="Ray spin, rev/second"
+)
 @click.option("--halo-flicker", default=HaloParams.flicker, show_default=True)
 @click.option("--halo-hue-speed", default=HaloParams.hue_speed, show_default=True)
 @click.option("--halo-scale", default=HaloParams.scale, show_default=True)
@@ -47,6 +50,7 @@ def cli(
     halo_reach,
     halo_density,
     halo_speed,
+    halo_rotate,
     halo_flicker,
     halo_hue_speed,
     halo_scale,
@@ -60,6 +64,7 @@ def cli(
         reach=halo_reach,
         density=halo_density,
         speed=halo_speed,
+        rotate=halo_rotate,
         flicker=halo_flicker,
         hue_speed=halo_hue_speed,
         scale=halo_scale,

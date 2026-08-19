@@ -38,6 +38,7 @@ class HaloParams:
     reach: float = 260.0
     density: float = 48.0
     speed: float = 120.0
+    rotate: float = 0.05  # revolutions per second the ray field turns
     flicker: float = 0.8
     hue_speed: float = 0.08
     hue_twist: float = 0.0015
@@ -74,8 +75,11 @@ class HaloRenderer:
         cx, cy = np.float32(xs.mean()), np.float32(ys.mean())
         yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
         theta = np.arctan2(yy - cy, xx - cx)  # -pi..pi
-        # texture lookup: angle wraps around TEX_W, radius scrolls with time
-        map_x = ((theta / (2 * np.pi) + 0.5) * self.TEX_W) % self.TEX_W
+        # Texture lookup: angle wraps around TEX_W, radius scrolls with time.
+        # The coarsest noise octave has 8 cells across TEX_W, so scaling the
+        # angle by density/8 makes `density` the number of rays around the head.
+        theta_n = (theta + 2 * np.pi * t * self.p.rotate) / (2 * np.pi) + 0.5
+        map_x = (theta_n * (self.p.density / 8.0) * self.TEX_W) % self.TEX_W
         map_y = (
             (dist * (self.TEX_H / self.p.reach)) - t * self.p.speed * (self.TEX_H / self.p.reach)
         ) % self.TEX_H
@@ -86,10 +90,11 @@ class HaloRenderer:
         n0 = cv2.remap(self.tex[i0], map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_WRAP)
         n1 = cv2.remap(self.tex[i1], map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_WRAP)
         n = n0 * (1 - frac) + n1 * frac
-        # angular fine detail: multiply by a second, denser lookup
+        # angular fine detail: a second, slow lookup that modulates ray brightness
+        # around the circle; fixed rate so it does not fight `density`
         n_fine = cv2.remap(
             self.tex[(i0 + 3) % self.TEX_N],
-            (map_x * self.p.density / 8.0) % self.TEX_W,
+            (theta_n * 3.0 * self.TEX_W) % self.TEX_W,
             map_y,
             cv2.INTER_LINEAR,
             borderMode=cv2.BORDER_WRAP,

@@ -37,6 +37,20 @@ def test_render_deterministic_and_time_varying(ellipse_mask):
     assert np.abs(a - c).mean() > 0.005
 
 
+def test_density_changes_the_ray_field(ellipse_mask):
+    a = HaloRenderer(HaloParams(density=48), seed=5).render(ellipse_mask, 0.4)
+    b = HaloRenderer(HaloParams(density=200), seed=5).render(ellipse_mask, 0.4)
+    assert np.abs(a - b).mean() > 0.02
+
+
+def test_rotation_animates_when_everything_else_is_static(ellipse_mask):
+    static = {"speed": 0.0, "flicker": 0.0, "hue_speed": 0.0}
+    spun = HaloRenderer(HaloParams(rotate=0.25, **static), seed=7)
+    assert np.abs(spun.render(ellipse_mask, 0.0) - spun.render(ellipse_mask, 1.0)).mean() > 0.02
+    still = HaloRenderer(HaloParams(rotate=0.0, **static), seed=7)
+    assert np.array_equal(still.render(ellipse_mask, 0.0), still.render(ellipse_mask, 1.0))
+
+
 def test_render_empty_mask_returns_black():
     out = HaloRenderer().render(np.zeros((90, 160), np.float32), 0.0)
     assert out.max() == 0.0
