@@ -53,6 +53,8 @@ class HaloRenderer:
 
     def __init__(self, params: HaloParams | None = None, seed: int = 0):
         self.p = params or HaloParams()
+        if self.p.reach <= 0:
+            raise ValueError(f"halo reach must be > 0 pixels, got {self.p.reach}")
         self.tex = np.stack(
             [tileable_noise(self.TEX_H, self.TEX_W, seed=seed * 100 + i) for i in range(self.TEX_N)]
         )

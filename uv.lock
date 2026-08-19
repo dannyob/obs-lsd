@@ -244,7 +244,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.0" },
     { name = "mediapipe", specifier = ">=0.10,<1.0" },
     { name = "numpy", specifier = ">=2.0" },
-    { name = "opencv-python", specifier = ">=4.10" },
+    { name = "opencv-python", specifier = ">=4.10,<6" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "pyvirtualcam", specifier = ">=0.11" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },

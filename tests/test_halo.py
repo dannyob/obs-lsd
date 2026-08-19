@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from obs_lsd.halo import HaloParams, HaloRenderer, tileable_noise
 
@@ -65,3 +66,10 @@ def test_render_tiny_mask_returns_black_not_nan():
     out = HaloRenderer().render(mask, 0.5)
     assert out.max() == 0.0
     assert not np.isnan(out).any()
+
+
+@pytest.mark.parametrize("reach", [0.0, -5.0])
+def test_non_positive_reach_is_rejected(reach):
+    # reach divides the radius map and the falloff, so 0 renders NaN
+    with pytest.raises(ValueError, match="reach"):
+        HaloRenderer(HaloParams(reach=reach))
