@@ -73,3 +73,15 @@ def test_non_positive_reach_is_rejected(reach):
     # reach divides the radius map and the falloff, so 0 renders NaN
     with pytest.raises(ValueError, match="reach"):
         HaloRenderer(HaloParams(reach=reach))
+
+
+def test_no_jump_at_flicker_slice_boundary(ellipse_mask):
+    # flicker=0.5 with TEX_N=8 -> a slice boundary every 0.25 s; the change
+    # across the boundary must be no bigger than the change well inside a slice
+    r = HaloRenderer(HaloParams(flicker=0.5, speed=0.0, rotate=0.0, hue_speed=0.0))
+    dt = 1 / 60
+    inside = np.abs(r.render(ellipse_mask, 0.10) - r.render(ellipse_mask, 0.10 + dt)).mean()
+    across = np.abs(
+        r.render(ellipse_mask, 0.25 - dt / 2) - r.render(ellipse_mask, 0.25 + dt / 2)
+    ).mean()
+    assert across < 2.0 * inside + 1e-4

@@ -93,14 +93,24 @@ class HaloRenderer:
         n1 = cv2.remap(self.tex[i1], map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_WRAP)
         n = n0 * (1 - frac) + n1 * frac
         # angular fine detail: a second, slow lookup that modulates ray brightness
-        # around the circle; fixed rate so it does not fight `density`
-        n_fine = cv2.remap(
+        # around the circle; fixed rate so it does not fight `density`. Cross-faded
+        # between slices like `n`, otherwise it snaps to a new texture every tick.
+        map_x_fine = (theta_n * 3.0 * self.TEX_W) % self.TEX_W
+        f0 = cv2.remap(
             self.tex[(i0 + 3) % self.TEX_N],
-            (theta_n * 3.0 * self.TEX_W) % self.TEX_W,
+            map_x_fine,
             map_y,
             cv2.INTER_LINEAR,
             borderMode=cv2.BORDER_WRAP,
         )
+        f1 = cv2.remap(
+            self.tex[(i1 + 3) % self.TEX_N],
+            map_x_fine,
+            map_y,
+            cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_WRAP,
+        )
+        n_fine = f0 * (1 - frac) + f1 * frac
         rays = np.clip(n * (0.5 + n_fine), 0, 1) ** self.p.sharpness
         falloff = np.clip(1.0 - dist / self.p.reach, 0, 1) ** 1.5
         value = rays * falloff
