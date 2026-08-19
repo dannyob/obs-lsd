@@ -3,3 +3,6 @@
 __pycache__/
 *.pyc
 dist/
+src/obs_lsd/models/
+tests/data/
+*.png
