@@ -36,6 +36,12 @@ from obs_lsd.pipeline import Pipeline, PipelineConfig
 )
 @click.option("--halo-flicker", default=HaloParams.flicker, show_default=True)
 @click.option("--halo-hue-speed", default=HaloParams.hue_speed, show_default=True)
+@click.option(
+    "--halo-spill",
+    default=HaloParams.spill_gain,
+    show_default=True,
+    help="Halo colour wrap onto the head edge",
+)
 @click.option("--halo-scale", default=HaloParams.scale, show_default=True)
 def cli(
     camera,
@@ -56,6 +62,7 @@ def cli(
     halo_rotate,
     halo_flicker,
     halo_hue_speed,
+    halo_spill,
     halo_scale,
 ):
     """Glowing floating-head virtual camera."""
@@ -70,6 +77,7 @@ def cli(
         rotate=halo_rotate,
         flicker=halo_flicker,
         hue_speed=halo_hue_speed,
+        spill_gain=halo_spill,
         scale=halo_scale,
     )
     cfg = PipelineConfig(width=width, height=height, head_frac=head_frac, halo=halo)

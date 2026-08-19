@@ -74,7 +74,14 @@ class Pipeline:
         t3 = time.perf_counter()
         # Fade the head cutout together with the halo (mask * gain) rather than
         # snapping it from fully visible to black once gain hits 0.
-        out = compose(f, m * gain, halo, halo_gain=gain)
+        out = compose(
+            f,
+            m * gain,
+            halo,
+            halo_gain=gain,
+            spill_gain=self.halo.p.spill_gain,
+            spill_width=self.halo.p.spill_width,
+        )
         tm["compose"] = (time.perf_counter() - t3) * 1000
         tm["total"] = (time.perf_counter() - t0) * 1000
         self.timings = tm

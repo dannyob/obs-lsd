@@ -38,7 +38,7 @@ camera and a preview window. Options:
 - `--stats` -- print per-stage timings (segment/warp/halo/compose/total, in
   ms) to stderr once a second.
 - `--halo-reach`, `--halo-density`, `--halo-speed`, `--halo-flicker`,
-  `--halo-hue-speed`, `--halo-scale` -- tune the halo; see `HaloParams` in
+  `--halo-hue-speed`, `--halo-spill`, `--halo-scale` -- tune the halo; see `HaloParams` in
   `src/obs_lsd/halo.py` for what each does and its default.
 
 With the preview window focused, these keys work live:

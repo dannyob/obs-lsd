@@ -24,7 +24,11 @@ class FakeSeg:
 
 
 def test_step_centres_head_and_draws_halo():
-    cfg = PipelineConfig(width=320, height=180, head_frac=0.5, halo=HaloParams(reach=40.0))
+    # reach=40 keeps the corner black at this size; spill off because the tiny
+    # test head is only ~90 px tall, so a 30 px wrap would reach its centre
+    cfg = PipelineConfig(
+        width=320, height=180, head_frac=0.5, halo=HaloParams(reach=40.0, spill_gain=0.0)
+    )
     p = Pipeline(cfg, segmenter=FakeSeg())
     frame = np.full((240, 320, 3), (10, 200, 10), np.uint8)
     out = p.step(frame, 0.0)
@@ -63,7 +67,7 @@ def test_no_head_yet_returns_black_and_sets_timings():
 
 
 def test_frozen_reuses_last_mask():
-    cfg = PipelineConfig(width=320, height=180, head_frac=0.5)
+    cfg = PipelineConfig(width=320, height=180, head_frac=0.5, halo=HaloParams(spill_gain=0.0))
     seg = FakeSeg()
     p = Pipeline(cfg, segmenter=seg)
     frame = np.full((240, 320, 3), (10, 200, 10), np.uint8)

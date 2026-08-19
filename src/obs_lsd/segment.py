@@ -61,7 +61,7 @@ class HeadSegmenter:
         self,
         models_dir: Path = MODELS_DIR,
         hold_frames: int = 10,
-        feather: int = 5,
+        feather: int = 9,
         chin_margin: float = 0.06,
     ):
         seg_path, fl_path = models_dir / SEG_MODEL, models_dir / FL_MODEL
