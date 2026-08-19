@@ -58,6 +58,9 @@ class Pipeline:
         t1 = time.perf_counter()
         size = (self.cfg.width, self.cfg.height)
         if self._last_head is None:
+            tm["warp"] = tm["halo"] = tm["compose"] = 0.0
+            tm["total"] = (time.perf_counter() - t0) * 1000
+            self.timings = tm
             return np.zeros((self.cfg.height, self.cfg.width, 3), np.uint8)
         src_mask = self._last_head.mask
         m = cv2.warpAffine(src_mask, tr.matrix(), size, flags=cv2.INTER_LINEAR, borderValue=0)
@@ -69,7 +72,9 @@ class Pipeline:
         tm["halo"] = (time.perf_counter() - t2) * 1000
 
         t3 = time.perf_counter()
-        out = compose(f, m if gain > 0 else np.zeros_like(m), halo, halo_gain=gain)
+        # Fade the head cutout together with the halo (mask * gain) rather than
+        # snapping it from fully visible to black once gain hits 0.
+        out = compose(f, m * gain, halo, halo_gain=gain)
         tm["compose"] = (time.perf_counter() - t3) * 1000
         tm["total"] = (time.perf_counter() - t0) * 1000
         self.timings = tm
