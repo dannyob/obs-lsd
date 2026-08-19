@@ -45,3 +45,12 @@ def test_none_before_any_head_gives_identity_centered():
     tr = Tracker(out_size=(640, 360))
     t = tr.update(None)
     assert t.scale == 1.0 and t.tx == 0.0 and t.ty == 0.0
+
+
+def test_tiny_or_zero_height_is_clamped():
+    tr = Tracker(out_size=(1280, 720), target_frac=0.5)
+    t_zero = tr.update(HeadBox(cx=640, cy=360, height=0))
+    assert t_zero.scale == pytest.approx(0.5 * 720 / 8.0)
+    tr = Tracker(out_size=(1280, 720), target_frac=0.5)
+    t_neg = tr.update(HeadBox(cx=640, cy=360, height=-10))
+    assert t_neg.scale == pytest.approx(0.5 * 720 / 8.0)

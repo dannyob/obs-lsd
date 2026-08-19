@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+MIN_HEAD_PX = 8.0  # Minimum head height in pixels to avoid absurd zoom levels
+
 
 @dataclass
 class HeadBox:
@@ -63,5 +65,5 @@ class Tracker:
         if self._state is None:
             return Transform(1.0, 0.0, 0.0)
         s = self._state
-        scale = self.target_frac * self.out_h / max(s.height, 1.0)
+        scale = self.target_frac * self.out_h / max(s.height, MIN_HEAD_PX)
         return Transform(scale, self.out_w / 2 - scale * s.cx, self.out_h / 2 - scale * s.cy)
