@@ -30,3 +30,5 @@ python_files = ["test_*.py"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# docs/ holds specs and plans; ruff reformats the Python snippets inside them
+extend-exclude = ["docs"]
