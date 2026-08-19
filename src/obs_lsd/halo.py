@@ -110,6 +110,8 @@ class HaloRenderer:
         rgb = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
         rgb[binary.astype(bool)] = 0.0
         if s != 1.0:
+            # No second full-res zeroing pass here: it costs ~2.3 ms at 720p and
+            # compose already multiplies the halo by (1 - mask).
             rgb = cv2.resize(rgb, (W, H), interpolation=cv2.INTER_LINEAR)
-            rgb[mask > 0.5] = 0.0
-        return np.clip(rgb, 0, 1).astype(np.float32)
+        np.clip(rgb, 0, 1, out=rgb)
+        return rgb

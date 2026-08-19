@@ -34,12 +34,14 @@ class HeadMask:
 def chin_halfplane(shape, chin_xy, roll_deg: float, margin_px: float) -> np.ndarray:
     """1.0 on the 'above chin' side of a line through chin_xy tilted by roll_deg, else 0."""
     h, w = shape
-    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
     r = math.radians(roll_deg)
     # 'down' unit vector rotated by roll
     dx, dy = -math.sin(r), math.cos(r)
-    d = (xx - chin_xy[0]) * dx + (yy - chin_xy[1]) * dy - margin_px
-    return (d <= 0).astype(np.float32)
+    # separable: the distance to the line is a sum of a per-column and a per-row
+    # term, so build two 1-D ramps instead of a full HxW mgrid every frame
+    xs = (np.arange(w, dtype=np.float32) - chin_xy[0]) * dx
+    ys = (np.arange(h, dtype=np.float32) - chin_xy[1]) * dy - margin_px
+    return (xs[None, :] + ys[:, None] <= 0).astype(np.float32)
 
 
 def head_from_masks(hair, face, halfplane, feather: int) -> np.ndarray:
