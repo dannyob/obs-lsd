@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
+import functools
+
 import click
 
 from obs_lsd.capture import CameraError, FrameSource, list_cameras
@@ -108,33 +111,43 @@ def run(
             preview = Preview()
         last = None
         last_stat = 0.0
-        for frame, t in src:
-            out = pipe.step(frame, t)
-            last = out
-            if vcam:
-                vcam.send(out)
-            if preview:
-                action = preview.show(out)
-                if action == "quit":
+        try:
+            for frame, t in src:
+                out = pipe.step(frame, t)
+                last = out
+                if vcam:
+                    vcam.send(out)
+                if preview:
+                    action = preview.show(out)
+                    if action == "quit":
+                        break
+                    _apply_action(action, pipe)
+                if stats and t - last_stat >= 1.0:
+                    last_stat = t
+                    click.echo(
+                        " ".join(f"{k}={v:.1f}ms" for k, v in pipe.timings.items()), err=True
+                    )
+                if seconds is not None and t >= seconds:
                     break
-                _apply_action(action, pipe)
-            if stats and t - last_stat >= 1.0:
-                last_stat = t
-                click.echo(" ".join(f"{k}={v:.1f}ms" for k, v in pipe.timings.items()), err=True)
-            if seconds is not None and t >= seconds:
-                break
+        except KeyboardInterrupt:
+            pass  # ctrl-C is how you stop a live run; not an error
         if dump_frame and last is not None:
             import cv2
 
             cv2.imwrite(dump_frame, last)
         return 0
     finally:
+        # a failure in any one of these must not leave the camera or the
+        # virtual camera device held open
+        cleanups = []
         if preview:
-            preview.close()
+            cleanups.append(preview.close)
         if vcam:
-            vcam.__exit__(None, None, None)
-        pipe.close()
-        src.close()
+            cleanups.append(functools.partial(vcam.__exit__, None, None, None))
+        cleanups += [pipe.close, src.close]
+        for cleanup in cleanups:
+            with contextlib.suppress(Exception):
+                cleanup()
 
 
 def _apply_action(action: str | None, pipe: Pipeline) -> None:

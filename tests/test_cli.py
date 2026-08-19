@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import pytest
 from click.testing import CliRunner
 
 from obs_lsd.cli import cli
@@ -56,3 +57,92 @@ def test_headless_run_dumps_frame(tmp_path, monkeypatch):
     assert r.exit_code == 0, r.output
     img = cv2.imread(str(dump))
     assert img.shape == (36, 64, 3) and img[0, 0].max() == 255
+
+
+@pytest.fixture
+def still_png(tmp_path):
+    p = tmp_path / "in.png"
+    cv2.imwrite(str(p), np.zeros((20, 30, 3), np.uint8))
+    return p
+
+
+def _headless_args(src, dump, extra=()):
+    return [
+        "--input",
+        str(src),
+        "--seconds",
+        "5",
+        "--fps",
+        "100",
+        "--no-vcam",
+        "--no-preview",
+        "--dump-frame",
+        str(dump),
+        "--width",
+        "64",
+        "--height",
+        "36",
+        *extra,
+    ]
+
+
+class _FakePipeline:
+    """Pipeline stand-in: no models, and step() can be made to raise."""
+
+    timings = {"total": 1.0}  # noqa: RUF012 -- test fixture, single instance
+    frozen = False
+    raise_after = None
+    close_raises = False
+    closed = False
+
+    def __init__(self, cfg, segmenter=None):
+        self.cfg = cfg
+        self.steps = 0
+
+    def step(self, frame, t):
+        self.steps += 1
+        if self.raise_after is not None and self.steps > self.raise_after:
+            raise KeyboardInterrupt
+        out = np.zeros((self.cfg.height, self.cfg.width, 3), np.uint8)
+        out[0, 0] = 255
+        return out
+
+    def close(self):
+        type(self).closed = True
+        if self.close_raises:
+            raise RuntimeError("close blew up")
+
+
+def test_keyboard_interrupt_exits_zero_and_still_dumps(still_png, tmp_path, monkeypatch):
+    import obs_lsd.cli as climod
+
+    monkeypatch.setattr(_FakePipeline, "raise_after", 2)
+    monkeypatch.setattr(climod, "Pipeline", _FakePipeline)
+    dump = tmp_path / "out.png"
+    r = CliRunner().invoke(cli, _headless_args(still_png, dump))
+    assert r.exit_code == 0, r.output
+    assert "Traceback" not in r.output
+    assert cv2.imread(str(dump)).shape == (36, 64, 3)
+
+
+def test_failing_cleanup_still_releases_the_camera(still_png, tmp_path, monkeypatch):
+    import obs_lsd.cli as climod
+
+    closed = []
+
+    class FakeSource:
+        def __init__(self, *a, **k):
+            pass
+
+        def __iter__(self):
+            yield np.zeros((20, 30, 3), np.uint8), 0.0
+
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(_FakePipeline, "close_raises", True)
+    monkeypatch.setattr(climod, "Pipeline", _FakePipeline)
+    monkeypatch.setattr(climod, "FrameSource", FakeSource)
+    r = CliRunner().invoke(cli, _headless_args(still_png, tmp_path / "out.png"))
+    assert r.exit_code == 0, r.output
+    assert closed == [True], "src.close() skipped when an earlier cleanup raised"
