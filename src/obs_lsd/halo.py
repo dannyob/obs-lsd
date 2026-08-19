@@ -45,7 +45,7 @@ class HaloParams:
     sharpness: float = 2.5
     rim_width: float = 6.0
     rim_gain: float = 0.3
-    spill_gain: float = 0.6  # halo colour wrapped onto the head edge
+    spill_gain: float = 1.0  # halo colour wrapped onto the head edge
     spill_width: float = 30.0  # px inward that the wrap reaches
     scale: float = 0.5
 

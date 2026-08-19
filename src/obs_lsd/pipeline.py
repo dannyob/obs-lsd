@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 
@@ -10,7 +11,7 @@ import numpy as np
 
 from obs_lsd.compose import compose
 from obs_lsd.halo import HaloParams, HaloRenderer
-from obs_lsd.track import Tracker
+from obs_lsd.track import Tracker, Transform
 
 
 @dataclass
@@ -20,6 +21,8 @@ class PipelineConfig:
     head_frac: float = 0.55
     halo: HaloParams = field(default_factory=HaloParams)
     fade_seconds: float = 1.0
+    float_amp: float = 0.03  # gentle drift of the head about the centre, x frame height
+    float_period: float = 7.0  # seconds for one x swing; y uses period*11/7 so it wanders
 
 
 class Pipeline:
@@ -36,6 +39,14 @@ class Pipeline:
         self.timings: dict[str, float] = {}
         self._last_head = None
         self._lost_since: float | None = None
+
+    def float_offset(self, t: float) -> tuple[float, float]:
+        """Slow Lissajous drift so the head seems to float rather than sit pinned."""
+        a = self.cfg.float_amp * self.cfg.height
+        if a == 0.0:
+            return (0.0, 0.0)
+        px, py = self.cfg.float_period, self.cfg.float_period * 11.0 / 7.0
+        return (a * math.sin(2 * math.pi * t / px), 0.6 * a * math.sin(2 * math.pi * t / py + 1.0))
 
     def step(self, frame_bgr: np.ndarray, t: float) -> np.ndarray:
         tm: dict[str, float] = {}
@@ -54,6 +65,8 @@ class Pipeline:
             self._lost_since = t if self._lost_since is None else self._lost_since
             gain = max(0.0, 1.0 - (t - self._lost_since) / max(self.cfg.fade_seconds, 1e-6))
         tr = self.tracker.update(head.box if head is not None else None)
+        dx, dy = self.float_offset(t)
+        tr = Transform(tr.scale, tr.tx + dx, tr.ty + dy)
 
         t1 = time.perf_counter()
         size = (self.cfg.width, self.cfg.height)

@@ -26,6 +26,7 @@ camera and a preview window. Options:
   camera. A still is looped at `--fps`.
 - `--width`, `--height`, `--fps` -- output frame size and rate (default
   1280x720 at 30fps).
+- `--float` -- drift amplitude as a fraction of frame height (0 disables)
 - `--head-frac` -- target head height as a fraction of frame height
   (default 0.55).
 - `--no-vcam` -- skip opening the OBS virtual camera; useful when you only

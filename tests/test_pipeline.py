@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import pytest
 
 from obs_lsd.halo import HaloParams
 from obs_lsd.pipeline import Pipeline, PipelineConfig
@@ -77,3 +78,31 @@ def test_frozen_reuses_last_mask():
     out = p.step(frame, 0.5)
     assert tuple(out[90, 160]) == (10, 200, 10)  # still shows head colour, not faded
     assert "segment" in p.timings
+
+
+def test_float_drifts_head_slowly_around_centre():
+
+    base = {
+        "width": 320,
+        "height": 180,
+        "head_frac": 0.5,
+        "halo": HaloParams(reach=40.0, spill_gain=0.0),
+    }
+    still = Pipeline(PipelineConfig(float_amp=0.0, **base), segmenter=FakeSeg())
+    drift = Pipeline(PipelineConfig(float_amp=0.1, float_period=8.0, **base), segmenter=FakeSeg())
+    frame = np.full((240, 320, 3), (10, 200, 10), np.uint8)
+    # at t=0 the x term is zero, so the drifting head is still horizontally centred
+    assert drift.float_offset(0.0)[0] == 0.0
+    # a quarter of the x period later it has moved right by about amp*height
+    t = 8.0 / 4
+    a, b = still.step(frame, t), drift.step(frame, t)
+    expected_dx = 0.1 * 180
+
+    # find the head's horizontal centre of mass on the centre row (green channel == 200)
+    def cx(img):
+        cols = np.nonzero(img[:, :, 1] == 200)[1]
+        return cols.mean()
+
+    assert abs((cx(b) - cx(a)) - expected_dx) < 3.0
+    assert drift.float_offset(t)[0] == pytest.approx(expected_dx, abs=1e-6)
+    assert still.float_offset(t) == (0.0, 0.0)

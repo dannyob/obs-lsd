@@ -23,6 +23,13 @@ from obs_lsd.pipeline import Pipeline, PipelineConfig
 @click.option(
     "--head-frac", default=0.55, show_default=True, help="Head height as fraction of frame"
 )
+@click.option(
+    "--float",
+    "float_amp",
+    default=0.03,
+    show_default=True,
+    help="Gentle drift of the head about the centre, as a fraction of frame height; 0 disables",
+)
 @click.option("--no-vcam", is_flag=True, help="Do not open the virtual camera")
 @click.option("--no-preview", is_flag=True, help="No preview window")
 @click.option("--seconds", default=None, type=float, help="Stop after N seconds")
@@ -51,6 +58,7 @@ def cli(
     height,
     fps,
     head_frac,
+    float_amp,
     no_vcam,
     no_preview,
     seconds,
@@ -80,7 +88,9 @@ def cli(
         spill_gain=halo_spill,
         scale=halo_scale,
     )
-    cfg = PipelineConfig(width=width, height=height, head_frac=head_frac, halo=halo)
+    cfg = PipelineConfig(
+        width=width, height=height, head_frac=head_frac, halo=halo, float_amp=float_amp
+    )
     code = run(
         cfg, input_ if input_ else camera, fps, no_vcam, no_preview, seconds, dump_frame, stats
     )
