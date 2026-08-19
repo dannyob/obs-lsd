@@ -37,10 +37,10 @@ def tileable_noise(h: int, w: int, octaves: int = 4, seed: int = 0) -> np.ndarra
 class HaloParams:
     reach: float = 260.0
     density: float = 48.0
-    speed: float = 120.0
-    rotate: float = 0.05  # revolutions per second the ray field turns
-    flicker: float = 0.8
-    hue_speed: float = 0.08
+    speed: float = 35.0
+    rotate: float = 0.015  # revolutions per second the ray field turns
+    flicker: float = 0.05  # noise-slice cycles per second (x TEX_N slices); keep small
+    hue_speed: float = 0.03
     hue_twist: float = 0.0015
     sharpness: float = 2.5
     rim_width: float = 6.0
