@@ -96,3 +96,14 @@ def test_hold_frames_then_none_then_recovers():
         assert hm4 is not None
     finally:
         seg.close()
+
+
+def test_head_from_masks_normalises_confidence():
+    # the segmenter's confidence masks are soft: the head should reach full
+    # opacity and a low-confidence wash over the background should be cut
+    hair = np.full((6, 6), 0.10, np.float32)
+    face = np.zeros((6, 6), np.float32)
+    face[2:4, :] = 0.90
+    m = head_from_masks(hair, face, np.ones((6, 6), np.float32), feather=0)
+    assert m[0, 0] == 0.0
+    assert m[2, 3] == 1.0

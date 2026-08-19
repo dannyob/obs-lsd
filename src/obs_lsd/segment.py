@@ -46,6 +46,10 @@ def chin_halfplane(shape, chin_xy, roll_deg: float, margin_px: float) -> np.ndar
 
 def head_from_masks(hair, face, halfplane, feather: int) -> np.ndarray:
     m = np.maximum(hair, face) * halfplane
+    # MediaPipe's confidence masks rarely reach 1.0 even on the middle of a
+    # face, and leave a low wash over the background; stretch [0.15,0.85] to
+    # [0,1] so the head is solid and the wash is gone before feathering
+    m = np.clip((m - 0.15) / 0.7, 0, 1)
     if feather > 0:
         k = feather * 2 + 1
         m = cv2.GaussianBlur(m, (k, k), 0)
