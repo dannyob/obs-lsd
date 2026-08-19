@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import time
@@ -42,6 +43,8 @@ def resolve_camera(spec: str | None, names: list[str] | None = None) -> int | st
         return int(spec)
     if Path(spec).exists():
         return spec
+    if "/" in spec or os.sep in spec or Path(spec).suffix:
+        raise CameraError(f"File not found: {spec}")
     names = list_cameras() if names is None else names
     for i, n in enumerate(names):
         if spec.lower() in n.lower():

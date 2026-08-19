@@ -1,7 +1,13 @@
 import cv2
 import numpy as np
+import pytest
 
-from obs_lsd.capture import FrameSource, parse_system_profiler, resolve_camera
+from obs_lsd.capture import (
+    CameraError,
+    FrameSource,
+    parse_system_profiler,
+    resolve_camera,
+)
 
 SP_TEXT = """Camera:
 
@@ -42,3 +48,13 @@ def test_image_source_loops_and_times(tmp_path):
     src.close()
     assert [f[0] for f in frames] == [(20, 30, 3)] * 3
     assert frames[2][1] > frames[0][1] >= 0.0
+
+
+def test_resolve_camera_reports_missing_files_as_files(tmp_path):
+    with pytest.raises(CameraError, match="File not found"):
+        resolve_camera(str(tmp_path / "clip.mp4"))
+    with pytest.raises(CameraError, match="File not found"):
+        resolve_camera("clips/portrait")
+    # a bare word is still treated as a camera name
+    with pytest.raises(CameraError, match="No camera matching"):
+        resolve_camera("zzz", names=["MacBook Pro Camera"])
