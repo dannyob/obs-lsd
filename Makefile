@@ -37,7 +37,7 @@ lint: ## ruff check
 format: ## ruff format
 	$(UV) run ruff format .
 
-smoke: models testdata ## End-to-end headless run on synthetic clip
+smoke: models testdata ## End-to-end headless run on the still portrait
 	$(UV) run obs-lsd --input tests/data/portrait.jpg --seconds 2 --no-vcam --no-preview --dump-frame /tmp/obs-lsd-smoke.png
 	@test -s /tmp/obs-lsd-smoke.png && echo "smoke OK: /tmp/obs-lsd-smoke.png"
 
