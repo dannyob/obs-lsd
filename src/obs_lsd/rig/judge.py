@@ -50,6 +50,18 @@ def parse_score_json(text: str) -> dict:
         return json.loads(m.group(0))
 
 
+CATEGORIES = ("seamless", "distracting", "ornate")
+
+
+def coerce_sample(sample: dict) -> dict:
+    """A parsed reply with all three categories present and numeric. Anything
+    else is a bad sample: raise so the retry drops it and the good ones live."""
+    try:
+        return {**sample, **{k: float(sample[k]) for k in CATEGORIES}}
+    except (KeyError, TypeError, ValueError) as e:
+        raise ValueError(f"judge reply missing or non-numeric category: {e}") from None
+
+
 @dataclass
 class Score:
     seamless: float
@@ -119,23 +131,21 @@ class OpenRouterJudge:
         prompt = load_prompt("judge.md").format(
             metrics_table=metrics_table(stats), rubric=load_prompt("rubric.md")
         )
+        before = self.cost_usd
         results = []
         for _ in range(samples):
-            for attempt in range(2):
+            for _attempt in range(2):
                 try:
-                    results.append(parse_score_json(self._chat(self._run_content(run_dir, prompt))))
+                    reply = self._chat(self._run_content(run_dir, prompt))
+                    results.append(coerce_sample(parse_score_json(reply)))
                     break
                 except (ValueError, httpx.HTTPError):
-                    if attempt == 1:
-                        pass
+                    continue
         if len(results) < min(2, samples):
             raise RuntimeError(f"judge failed: only {len(results)} usable samples")
-        med = {
-            k: float(statistics.median(float(r[k]) for r in results))
-            for k in ("seamless", "distracting", "ornate")
-        }
+        med = {k: float(statistics.median(r[k] for r in results)) for k in CATEGORIES}
         total = sum(med.values())
-        best = min(results, key=lambda r: abs(sum(float(r[k]) for k in med) - total))
+        best = min(results, key=lambda r: abs(sum(r[k] for k in med) - total))
         s = Score(
             **med,
             total=total,
@@ -143,7 +153,7 @@ class OpenRouterJudge:
             top_fix=str(best.get("top_fix", "")),
             samples=results,
             model=self.model,
-            cost_usd=self.cost_usd,
+            cost_usd=self.cost_usd - before,  # what THIS score cost, not the total
         )
         (run_dir / "score.json").write_text(json.dumps(s.to_json(), indent=2))
         return s

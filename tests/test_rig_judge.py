@@ -87,6 +87,33 @@ def test_score_with_one_sample(tmp_path):
     assert json.loads((d / "score.json").read_text())["total"] == 42
 
 
+def test_score_drops_a_sample_missing_a_category_and_keeps_the_good_ones(tmp_path):
+    d = _run_dir(tmp_path)
+    good = json.dumps(
+        {"seamless": 12, "distracting": 20, "ornate": 12, "notes": "a", "top_fix": "x"}
+    )
+    bad = json.dumps({"seamless": 10, "distracting": 20, "notes": "b", "top_fix": "y"})
+    # sample 2 comes back without "ornate" on both attempts; 1 and 3 are fine
+    tr, calls = _transport([good, bad, bad, good])
+    j = OpenRouterJudge(model="m", api_key="k", transport=tr)
+    s = j.score(d, samples=3)
+    assert len(calls) == 4 and len(s.samples) == 2
+    assert (s.seamless, s.distracting, s.ornate, s.total) == (12, 20, 12, 44)
+
+
+def test_score_cost_is_this_score_not_the_running_total(tmp_path):
+    d = _run_dir(tmp_path)
+    reply = json.dumps(
+        {"seamless": 10, "distracting": 20, "ornate": 12, "notes": "a", "top_fix": "x"}
+    )
+    tr, _calls = _transport([reply])
+    j = OpenRouterJudge(model="m", api_key="k", transport=tr)
+    first = j.score(d, samples=1).cost_usd
+    second = j.score(d, samples=1).cost_usd
+    assert first > 0 and second == pytest.approx(first)
+    assert j.cost_usd == pytest.approx(first + second)
+
+
 def test_score_raises_with_too_few_usable_samples(tmp_path):
     d = _run_dir(tmp_path)
     good = json.dumps(
