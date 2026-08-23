@@ -22,6 +22,19 @@ class RunResult:
     n_frames: int
 
 
+def _count_frames(clip: str) -> int:
+    """Count frames by grabbing (not decoding) each one. Slower than reading
+    CAP_PROP_FRAME_COUNT but reliable for containers that report 0/garbage."""
+    cap = cv2.VideoCapture(clip)
+    try:
+        n = 0
+        while cap.grab():
+            n += 1
+        return n
+    finally:
+        cap.release()
+
+
 def render(
     clip: str,
     out_dir: Path,
@@ -32,22 +45,30 @@ def render(
     cfg = cfg or PipelineConfig()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    src = FrameSource(clip, cfg.width, cfg.height, 30.0, realtime=False)
-    fps = src.file_fps or 30.0
-    pipe = Pipeline(cfg, segmenter=segmenter)
-    sink = VideoFileSink(str(out_dir / "out.mp4"), cfg.width, cfg.height, fps)
-    boxes, timings, deltas, times, kept = [], [], [], [], {}
+    boxes, timings, deltas, kept = [], [], [], {}
     prev = None
-    # which frame indices to keep in memory for the images
+    i = 0
+    src = pipe = sink = None
     try:
-        n_total = int(cv2.VideoCapture(clip).get(cv2.CAP_PROP_FRAME_COUNT)) or 0
+        src = FrameSource(clip, cfg.width, cfg.height, 30.0, realtime=False)
+        fps = src.file_fps or 30.0
+        pipe = Pipeline(cfg, segmenter=segmenter)
+        sink = VideoFileSink(str(out_dir / "out.mp4"), cfg.width, cfg.height, fps)
+
+        probe = cv2.VideoCapture(clip)
+        try:
+            n_total = int(probe.get(cv2.CAP_PROP_FRAME_COUNT))
+        finally:
+            probe.release()
+        if n_total <= 0:
+            n_total = _count_frames(clip)
+
         sheet_idx = set(sample_indices(n_total, sheet_frames))
         crop_idx = {int(n_total * f) for f in (0.25, 0.5, 0.75)}
         step100 = max(1, round(fps / 10))
         mid = n_total // 2
-        motion_idx = {mid + i * step100 for i in range(8)}
+        motion_idx = {mid + n * step100 for n in range(8)}
         want = sheet_idx | crop_idx | motion_idx
-        i = 0
         for frame, t in src:
             out = pipe.step(frame, t)
             sink.write(out)
@@ -57,13 +78,15 @@ def render(
                 deltas.append(halo_delta(prev, out, pipe.last_mask_out))
             if i in want:
                 kept[i] = out.copy()
-                times.append(t)
             prev = out
             i += 1
     finally:
-        sink.close()
-        pipe.close()
-        src.close()
+        if sink is not None:
+            sink.close()
+        if pipe is not None:
+            pipe.close()
+        if src is not None:
+            src.close()
     stats = frame_stats(boxes, timings, deltas)
     (out_dir / "metrics.json").write_text(json.dumps(stats, indent=2))
     if kept:
