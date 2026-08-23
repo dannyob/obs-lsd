@@ -74,6 +74,32 @@ def test_score_takes_median_and_writes_file(tmp_path):
     assert j.cost_usd > 0
 
 
+def test_score_with_one_sample(tmp_path):
+    d = _run_dir(tmp_path)
+    reply = json.dumps(
+        {"seamless": 10, "distracting": 20, "ornate": 12, "notes": "a", "top_fix": "x"}
+    )
+    tr, calls = _transport([reply])
+    j = OpenRouterJudge(model="m", api_key="k", transport=tr)
+    s = j.score(d, samples=1)
+    assert (s.seamless, s.distracting, s.ornate, s.total) == (10, 20, 12, 42)
+    assert len(calls) == 1
+    assert json.loads((d / "score.json").read_text())["total"] == 42
+
+
+def test_score_raises_with_too_few_usable_samples(tmp_path):
+    d = _run_dir(tmp_path)
+    good = json.dumps(
+        {"seamless": 10, "distracting": 20, "ornate": 12, "notes": "a", "top_fix": "x"}
+    )
+    # two of the three requested samples never produce parseable JSON (both attempts each)
+    replies = ["garbage"] * 4 + [good]
+    tr, _calls = _transport(replies)
+    j = OpenRouterJudge(model="m", api_key="k", transport=tr)
+    with pytest.raises(RuntimeError):
+        j.score(d, samples=3)
+
+
 def test_pairwise_randomises_sides_and_counts_votes(tmp_path):
     a, b = _run_dir(tmp_path, "a"), _run_dir(tmp_path, "b")
     # the model always says "A"; with randomised sides the real winner alternates

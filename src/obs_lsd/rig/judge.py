@@ -128,7 +128,7 @@ class OpenRouterJudge:
                 except (ValueError, httpx.HTTPError):
                     if attempt == 1:
                         pass
-        if len(results) < 2:
+        if len(results) < min(2, samples):
             raise RuntimeError(f"judge failed: only {len(results)} usable samples")
         med = {
             k: float(statistics.median(float(r[k]) for r in results))
