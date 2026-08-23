@@ -82,25 +82,48 @@ hand before committing to a full evolution run.
 
 `make evolve CLIP=clips/danny-01.mov GENS=N` runs the actual loop: each
 generation spins up one or more `evo/gN-k` branches in their own worktrees
-under `.worktrees/`, each seeded from the previous generation's best
-survivor. Inside each worktree a `claude -p --dangerously-skip-permissions`
-agent reads a brief (parent score, judge notes, the running
-`techniques.md` log) and edits the halo/compose code to try one new idea,
-commits it, then the rig runs that worktree's own tests and lint, renders
-the clip with the candidate's code, checks the render against gates
-(head detected, no scale blowups, timing budget, tests/lint clean), and —
-if it gates clean — judges it. Only the child worktrees' code ever runs
-this way; the controlling process and `main` are never touched by an
-agent. Do not run `evolve` against a dirty working tree — the driver reads
-`HEAD` as the parent sha for the first generation.
+under `.worktrees/`, child k seeded from survivor k of the last generation.
+Inside each worktree a `claude -p --dangerously-skip-permissions` agent
+reads a brief (parent score, judge notes, the running `techniques.md` log)
+and edits the halo/compose code to try one new idea, commits it, then the
+rig diffs that commit against its parent and throws the child away if it
+touched anything outside `ALLOWED_PATHS` in `evolve.py` (the halo/compose/
+segment/track/pipeline/cli modules, their tests, and `techniques.md`).
+Children that stayed in scope get their tests and lint run, the clip
+rendered with their own code, and the render checked against the gates:
+the head still found on as many frames as the baseline, ms/frame within
+15% of the parent and 1.5x of the baseline, and no more halo-delta jumps
+than twice the baseline's count (floor of 5). Whatever gates clean is
+judged. `--agent-budget` (default $5) is passed to each agent as
+`--max-budget-usd`.
+
+Children fork from the sha in `runs/baseline.json`, not from `HEAD`, so
+re-run `make baseline CLIP=…` after merging anything into `main` —
+otherwise every child forks from the old commit. `evolve` refuses to start
+when that sha is not `HEAD` unless you pass `--allow-stale-baseline`.
+
+Confinement here is by convention plus that scope check, not by a sandbox.
+Each worktree lives inside the repo and shares its `.git`, the agent runs
+with `--dangerously-skip-permissions`, and it inherits your environment
+minus `OPENROUTER_API_KEY` — so it can in principle reach anything you
+can. What the code actually guarantees is narrower: the driver never
+checks out `main`, and a champion reaches `main` only through a `git
+merge` you type yourself. Three streams of model-written text also land
+verbatim in the next agent's brief — the judge's notes, `techniques.md`,
+and the sibling diffs pasted in for crossover — so the loop is a
+prompt-injection path by construction. That's acceptable for a local
+single-user tool; don't point it at a clip or a branch you don't trust.
 
 Every attempt, whether it gates clean or not, gets a record appended to
 `runs/ledger.json`: branch, parent, generation, operator, gate result and
 reasons, judge score (seamless/distracting/ornate/total plus notes and a
-top-fix suggestion), the render's metrics summary, and cost. The render
-itself lands in `runs/<branch>-<sha>/`, with `sheet.png` (a timestamped
-grid of frames), `crops.png` (zoomed-in problem areas), `motion.png`, the
-composited `out.mp4`, `metrics.json`, and `score.json`.
+top-fix suggestion), the render's metrics summary, and both costs (judge
+and agent). The render itself lands in `runs/<branch>-<sha>/`, with
+`sheet.png` (a timestamped grid of frames), `crops.png` (centre crops at
+25/50/75% of the clip), `motion.png`, the composited `out.mp4`,
+`metrics.json`, and `score.json`. The brief the agent was given and its
+`total_cost_usd` JSON land in `runs/agents/<branch>/`, outside the
+worktree so they can't be committed by accident.
 
 To promote a generation's winner into `main`, just merge its branch:
 `git merge evo/g3-1`. Nothing about the rig is special about that branch
@@ -126,5 +149,5 @@ $0.09 per call, and a score samples 3 calls by default, so about $0.30 to
 score one child. The coding agent's turns are `claude -p` and are billed
 to whatever authenticates `claude` on your machine (your Claude plan or an
 API key), not OpenRouter; that side runs a few dollars per child in
-practice, as reported by `total_cost_usd` in each worktree's
-`agent-output.json`.
+practice. The generation table prints both, per child and cumulative, and
+`--agent-budget` caps the `claude -p` side.
