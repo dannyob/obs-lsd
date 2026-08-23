@@ -188,30 +188,8 @@ class Evolution:
         for child in child_plan(gen, survivors):
             parent = self.ledger.by_id(child["parent"])
             branch = f"evo/g{gen}-{child['k']}"
-            wt = self._worktree(branch, parent["sha"])
-            extra = ""
-            if child["operator"] == "crossover":
-                a, b = (self.ledger.by_id(p) for p in child["parents"])
-                base = _git(self.repo, "merge-base", a["sha"], b["sha"])
-                extra = (
-                    "Diff A:\n"
-                    + _git(self.repo, "diff", base, a["sha"])
-                    + "\n\nDiff B:\n"
-                    + _git(self.repo, "diff", base, b["sha"])
-                )
-            brief = build_brief(
-                branch,
-                gen,
-                child["operator"],
-                parent["score"] or {},
-                parent["metrics_summary"],
-                self._techniques(wt),
-                extra,
-            )
-            self._say(f"[g{gen}] {branch} <- {parent['id']} via {child['operator']}")
-            agent_ok, agent_msg = self._run_agent(wt, brief)
             rec = {
-                "id": f"{branch.replace('/', '-')}",
+                "id": branch.replace("/", "-"),
                 "branch": branch,
                 "parent": parent["id"],
                 "generation": gen,
@@ -222,19 +200,55 @@ class Evolution:
                 "metrics_summary": {},
                 "run_dir": None,
                 "cost_usd": 0.0,
-                "agent": agent_msg,
+                "agent": None,
             }
-            if not self.dry_run:
-                sha = self._sha(branch)
-                if not agent_ok or sha == parent["sha"]:
-                    rec["gates"] = {
-                        "ok": False,
-                        "reasons": ["agent failed" if not agent_ok else "no change"],
-                    }
-                else:
-                    rec["sha"] = sha
-                    rec["id"] = f"{rec['id']}-{sha}"
-                    self._evaluate(rec, wt)
+            stage = "worktree"
+            try:
+                wt = self._worktree(branch, parent["sha"])
+
+                operator = child["operator"]
+                extra = ""
+                if operator == "crossover":
+                    stage = "crossover"
+                    a, b = (self.ledger.by_id(p) for p in child["parents"])
+                    base = _git(self.repo, "merge-base", a["sha"], b["sha"])
+                    extra = (
+                        "Diff A:\n"
+                        + _git(self.repo, "diff", base, a["sha"])
+                        + "\n\nDiff B:\n"
+                        + _git(self.repo, "diff", base, b["sha"])
+                    )
+
+                stage = "brief"
+                brief = build_brief(
+                    branch,
+                    gen,
+                    operator,
+                    parent["score"] or {},
+                    parent["metrics_summary"],
+                    self._techniques(wt),
+                    extra,
+                )
+                self._say(f"[g{gen}] {branch} <- {parent['id']} via {operator}")
+
+                stage = "agent"
+                agent_ok, agent_msg = self._run_agent(wt, brief)
+                rec["agent"] = agent_msg
+                if not self.dry_run:
+                    sha = self._sha(branch)
+                    if not agent_ok or sha == parent["sha"]:
+                        rec["gates"] = {
+                            "ok": False,
+                            "reasons": ["agent failed" if not agent_ok else "no change"],
+                        }
+                    else:
+                        rec["sha"] = sha
+                        rec["id"] = f"{rec['id']}-{sha}"
+                        stage = "evaluate"
+                        self._evaluate(rec, wt)
+            except Exception as e:  # noqa: BLE001 - any per-child failure must not abort the run
+                rec["gates"] = {"ok": False, "reasons": [f"{stage} failed: {e!s:.300}"]}
+                self._say(f"[g{gen}] {rec['branch']} FAILED at {stage}: {e!s:.200}")
             self.ledger.append(rec)
             results.append(rec)
         self._table(gen, results)
@@ -242,40 +256,51 @@ class Evolution:
 
     def _evaluate(self, rec: dict, wt: Path) -> None:
         from obs_lsd.rig.gates import gate, run_checks
-        from obs_lsd.rig.render import render  # noqa: F401  (imported for interface parity)
 
-        ok, tail = run_checks(wt)
+        ok, tail = run_checks(wt, timeout_s=600)
+        if not ok:
+            reason = tail if tail == "tests timed out" else f"tests/lint failed: {tail[-200:]}"
+            rec["gates"] = {"ok": False, "reasons": [reason]}
+            return
+
         run_dir = self.runs / rec["id"]
         # render with the CANDIDATE's code: run obs-lsd-rig render inside the worktree
-        r = subprocess.run(
-            [
-                "uv",
-                "run",
-                "obs-lsd-rig",
-                "render",
-                str(Path(self.clip).resolve()),
-                "--out",
-                str(run_dir.resolve()),
-            ],
-            cwd=wt,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            r = subprocess.run(
+                [
+                    "uv",
+                    "run",
+                    "obs-lsd-rig",
+                    "render",
+                    str(Path(self.clip).resolve()),
+                    "--out",
+                    str(run_dir.resolve()),
+                ],
+                cwd=wt,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=600,
+            )
+        except subprocess.TimeoutExpired:
+            rec["gates"] = {"ok": False, "reasons": ["render timed out"]}
+            return
         if r.returncode != 0:
             rec["gates"] = {"ok": False, "reasons": ["render failed: " + r.stderr[-300:]]}
             return
         stats = json.loads((run_dir / "metrics.json").read_text())
         rec["metrics_summary"] = stats
         rec["run_dir"] = str(run_dir)
-        g_ok, why = gate(stats, self.baseline["stats"], checks_ok=ok)
-        if not ok:
-            why = [f"tests/lint failed: {tail[-200:]}"]
+        g_ok, why = gate(stats, self.baseline["stats"], checks_ok=True)
         rec["gates"] = {"ok": g_ok, "reasons": why}
         if g_ok and self.judge is not None:
-            s = self.judge.score(run_dir)
-            rec["score"] = s.to_json()
-            rec["cost_usd"] = s.cost_usd
+            try:
+                before = self.judge.cost_usd
+                s = self.judge.score(run_dir)
+                rec["score"] = s.to_json()
+                rec["cost_usd"] = self.judge.cost_usd - before
+            except Exception as e:  # noqa: BLE001 - judge.score() can raise anything (httpx, JSON, etc.)
+                rec["gates"] = {"ok": False, "reasons": [f"judge failed: {e!s:.300}"]}
 
     def _table(self, gen: int, recs: list[dict]) -> None:
         self._say(f"--- generation {gen} ---")

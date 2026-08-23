@@ -9,3 +9,5 @@ tests/data/
 clips/
 runs/
 .worktrees/
+brief.md
+agent-output.json

@@ -33,9 +33,19 @@ def gate(cand: dict, base: dict, checks_ok: bool = True) -> tuple[bool, list[str
     return not why, why
 
 
-def run_checks(cwd: Path) -> tuple[bool, str]:
+def run_checks(cwd: Path, timeout_s: int = 600) -> tuple[bool, str]:
     cmd = "uv run pytest -q && uv run ruff check . && uv run ruff format --check ."
-    r = subprocess.run(["bash", "-lc", cmd], cwd=cwd, capture_output=True, text=True, check=False)
+    try:
+        r = subprocess.run(
+            ["bash", "-lc", cmd],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout_s,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "tests timed out"
     return r.returncode == 0, (r.stdout + r.stderr)[-2000:]
 
 

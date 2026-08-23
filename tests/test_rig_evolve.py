@@ -1,5 +1,6 @@
 import json
 import subprocess
+from pathlib import Path
 
 from obs_lsd.rig.evolve import (
     OPERATORS,
@@ -114,5 +115,62 @@ def test_dry_run_generation_creates_branches_and_ledger(tmp_path):
         ["git", "branch", "--list", "evo/*"], cwd=repo, capture_output=True, text=True, check=False
     ).stdout
     assert "evo/g1-0" in branches
+    ledger = json.loads((runs / "ledger.json").read_text())
+    assert ledger[-1]["id"] == rec["id"]
+
+
+def test_run_generation_survives_judge_failure(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    runs = repo / "runs"
+    runs.mkdir()
+    base_stats = {"ms_total_mean": 30.0, "no_head_frac": 0.0, "jump_count": 2}
+    (runs / "baseline.json").write_text(
+        json.dumps(
+            {
+                "run_dir": "runs/baseline-abc1234",
+                "stats": base_stats,
+                "score": {
+                    "seamless": 10,
+                    "distracting": 10,
+                    "ornate": 10,
+                    "total": 30,
+                    "notes": "n",
+                    "top_fix": "t",
+                },
+            }
+        )
+    )
+
+    class BoomJudge:
+        cost_usd = 0.0
+
+        def score(self, run_dir):
+            raise RuntimeError("boom")
+
+    ev = Evolution(repo=repo, clip="unused.mov", dry_run=False, population=3, judge=BoomJudge())
+    monkeypatch.setattr(ev, "_prepare_worktree", lambda wt: None)
+    monkeypatch.setattr(ev, "_run_agent", lambda wt, brief: (True, "ok"))
+    monkeypatch.setattr(ev, "_sha", lambda ref: "cafefeed")
+    monkeypatch.setattr("obs_lsd.rig.gates.run_checks", lambda cwd, timeout_s=600: (True, ""))
+
+    real_run = subprocess.run
+
+    def fake_run(cmd, *args, **kwargs):
+        if isinstance(cmd, list) and cmd[:3] == ["uv", "run", "obs-lsd-rig"]:
+            out_dir = Path(cmd[cmd.index("--out") + 1])
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "metrics.json").write_text(
+                json.dumps({"ms_total_mean": 10.0, "no_head_frac": 0.0, "jump_count": 0})
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    recs = ev.run_generation(1)
+    assert len(recs) == 1
+    rec = recs[0]
+    assert rec["gates"]["ok"] is False
+    assert rec["gates"]["reasons"][0].startswith("judge failed")
     ledger = json.loads((runs / "ledger.json").read_text())
     assert ledger[-1]["id"] == rec["id"]
