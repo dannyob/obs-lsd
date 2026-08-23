@@ -1,0 +1,54 @@
+"""Hard gates a candidate must pass before it is worth judging."""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+
+from obs_lsd.rig import RUNS_DIR
+
+MS_FACTOR = 1.15
+NO_HEAD_SLACK = 0.01
+JUMP_FACTOR = 2.0
+
+
+def gate(cand: dict, base: dict, checks_ok: bool = True) -> tuple[bool, list[str]]:
+    why = []
+    if not checks_ok:
+        why.append("tests/lint failed")
+        return False, why
+    if cand["ms_total_mean"] > MS_FACTOR * base["ms_total_mean"]:
+        why.append(
+            f"ms/frame {cand['ms_total_mean']:.1f} > {MS_FACTOR}x baseline {base['ms_total_mean']:.1f}"
+        )
+    if cand["no_head_frac"] > base["no_head_frac"] + NO_HEAD_SLACK:
+        why.append(
+            f"no-head frac {cand['no_head_frac']:.3f} > baseline {base['no_head_frac']:.3f}+{NO_HEAD_SLACK}"
+        )
+    if cand["jump_count"] > JUMP_FACTOR * base["jump_count"]:
+        why.append(
+            f"jump count {cand['jump_count']} > {JUMP_FACTOR}x baseline {base['jump_count']}"
+        )
+    return not why, why
+
+
+def run_checks(cwd: Path) -> tuple[bool, str]:
+    cmd = "uv run pytest -q && uv run ruff check . && uv run ruff format --check ."
+    r = subprocess.run(["bash", "-lc", cmd], cwd=cwd, capture_output=True, text=True, check=False)
+    return r.returncode == 0, (r.stdout + r.stderr)[-2000:]
+
+
+def baseline_path() -> Path:
+    return RUNS_DIR / "baseline.json"
+
+
+def write_baseline(run_dir: Path, stats: dict, score: dict) -> None:
+    baseline_path().parent.mkdir(parents=True, exist_ok=True)
+    baseline_path().write_text(
+        json.dumps({"run_dir": str(run_dir), "stats": stats, "score": score}, indent=2)
+    )
+
+
+def load_baseline() -> dict:
+    return json.loads(baseline_path().read_text())

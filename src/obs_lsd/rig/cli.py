@@ -77,9 +77,29 @@ def calibrate(pairs_json, models):
 
 
 @rig.command()
-def baseline():
-    """Render + score main and save runs/baseline.json."""
-    raise click.ClickException("not implemented yet")
+@click.argument("clip", type=click.Path(exists=True))
+@click.option("--judge-model", default=None)
+@click.option("--samples", default=3, show_default=True)
+def baseline(clip, judge_model, samples):
+    """Render + score the current tree and save runs/baseline.json."""
+    import subprocess
+
+    from obs_lsd.pipeline import PipelineConfig
+    from obs_lsd.rig.gates import write_baseline
+    from obs_lsd.rig.judge import DEFAULT_MODEL, OpenRouterJudge
+    from obs_lsd.rig.render import render as _render
+
+    sha = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=False
+    ).stdout.strip()
+    run_dir = Path("runs") / f"baseline-{sha}"
+    res = _render(clip, run_dir, cfg=PipelineConfig())
+    j = OpenRouterJudge(model=judge_model or DEFAULT_MODEL)
+    s = j.score(run_dir, samples=samples)
+    write_baseline(run_dir, res.stats, s.to_json())
+    click.echo(
+        f"baseline {run_dir}: total {s.total:.0f}/90, ms/frame {res.stats['ms_total_mean']:.1f}  (${j.cost_usd:.3f})"
+    )
 
 
 @rig.command()
