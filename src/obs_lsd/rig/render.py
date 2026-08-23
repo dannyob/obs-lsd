@@ -88,7 +88,9 @@ def render(
         if src is not None:
             src.close()
     stats = frame_stats(boxes, timings, deltas)
-    (out_dir / "metrics.json").write_text(json.dumps(stats, indent=2))
+    # the per-frame deltas ride along so the gates can count jumps against a
+    # fixed threshold (the baseline's median) instead of the candidate's own
+    (out_dir / "metrics.json").write_text(json.dumps({**stats, "deltas": deltas}, indent=2))
     if kept:
         s_keys = sorted(k for k in sheet_idx if k in kept)[:sheet_frames]
         cv2.imwrite(

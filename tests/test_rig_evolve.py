@@ -255,7 +255,14 @@ def test_run_generation_survives_judge_failure(tmp_path, monkeypatch):
             out_dir = Path(cmd[cmd.index("--out") + 1])
             out_dir.mkdir(parents=True, exist_ok=True)
             (out_dir / "metrics.json").write_text(
-                json.dumps({"ms_total_mean": 10.0, "no_head_frac": 0.0, "jump_count": 0})
+                json.dumps(
+                    {
+                        "ms_total_mean": 10.0,
+                        "no_head_frac": 0.0,
+                        "jump_count": 0,
+                        "deltas": [0.01] * 5,
+                    }
+                )
             )
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         return real_run(cmd, *args, **kwargs)
@@ -267,6 +274,7 @@ def test_run_generation_survives_judge_failure(tmp_path, monkeypatch):
     rec = recs[0]
     assert rec["gates"]["ok"] is False
     assert rec["gates"]["reasons"][0].startswith("judge failed")
+    assert "deltas" not in rec["metrics_summary"]  # the ledger stays readable
     ledger = json.loads((runs / "ledger.json").read_text())
     assert ledger[-1]["id"] == rec["id"]
 

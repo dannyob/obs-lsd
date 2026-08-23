@@ -40,6 +40,8 @@ def test_render_writes_run_dir(tmp_path):
         assert (out / name).exists(), name
     stats = json.loads((out / "metrics.json").read_text())
     assert stats["frames"] == 30 and stats["no_head"] == 0 and stats["ms_total_mean"] > 0
+    # the per-frame deltas ride along for the jump gate
+    assert len(stats["deltas"]) == 29 and all(isinstance(d, float) for d in stats["deltas"])
     sheet = cv2.imread(str(out / "sheet.png"))
     assert sheet.shape[1] == 4 * 480
     cap = cv2.VideoCapture(str(out / "out.mp4"))

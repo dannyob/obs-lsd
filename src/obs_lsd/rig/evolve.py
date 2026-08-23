@@ -402,9 +402,12 @@ class Evolution:
             rec["gates"] = {"ok": False, "reasons": ["render failed: " + r.stderr[-300:]]}
             return
         stats = json.loads((run_dir / "metrics.json").read_text())
-        rec["metrics_summary"] = stats
+        # the per-frame deltas are for the gate only; keep them out of the ledger
+        rec["metrics_summary"] = {k: v for k, v in stats.items() if k != "deltas"}
         rec["run_dir"] = str(run_dir)
-        g_ok, why = gate(stats, self.baseline["stats"], checks_ok=True)
+        g_ok, why = gate(
+            stats, self.baseline["stats"], checks_ok=True, parent=parent.get("metrics_summary")
+        )
         rec["gates"] = {"ok": g_ok, "reasons": why}
         if g_ok and self.judge is not None:
             try:
