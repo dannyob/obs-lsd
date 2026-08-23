@@ -35,4 +35,5 @@ Metrics: {metrics_table}
 - Append a line to techniques.md at the repo root: `- g{generation}: <what you did, one line>`.
 - Commit everything with a short imperative subject and a body saying why.
 - When done, print one line starting with `RESULT:` summarising the change.
-- Do not commit brief.md or agent-output.json (they're gitignored scratch files).
+- Leave no scratch files in the worktree; anything you add that is not in the
+  allowed list above fails the round.

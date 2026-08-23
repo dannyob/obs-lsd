@@ -166,6 +166,35 @@ def test_evaluate_refuses_out_of_scope_child_before_running_checks(tmp_path, mon
     assert rec["gates"]["reasons"] == ["out-of-scope changes: src/obs_lsd/rig/gates.py"]
 
 
+def test_run_agent_caps_budget_scrubs_the_key_and_records_cost(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    _seed_baseline(repo, f"runs/baseline-{_head(repo)}")
+    ev = Evolution(repo=repo, clip="unused.mov", dry_run=False, max_budget_usd=3.0)
+    seen = {}
+
+    def fake_run(cmd, *a, **kw):
+        seen["cmd"], seen["env"] = cmd, kw["env"]
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps({"total_cost_usd": 2.52}), stderr=""
+        )
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-secret")
+    monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setattr("obs_lsd.rig.evolve.subprocess.run", fake_run)
+
+    agent_dir = repo / "runs" / "agents" / "evo-g1-0"
+    ok, _msg, cost = ev._run_agent(repo, "brief text", agent_dir)
+
+    assert ok and cost == 2.52
+    cmd = seen["cmd"]
+    assert cmd[cmd.index("--max-budget-usd") + 1] == "3.0"
+    assert "OPENROUTER_API_KEY" not in seen["env"] and "CLAUDE_CODE_ENTRYPOINT" not in seen["env"]
+    assert seen["env"]["PATH"] == "/usr/bin"  # everything else is inherited
+    assert (agent_dir / "brief.md").read_text() == "brief text"
+    assert json.loads((agent_dir / "agent-output.json").read_text())["total_cost_usd"] == 2.52
+
+
 def test_dry_run_generation_creates_branches_and_ledger(tmp_path):
     repo = _repo(tmp_path)
     runs = repo / "runs"
@@ -194,7 +223,10 @@ def test_dry_run_generation_creates_branches_and_ledger(tmp_path):
     assert (
         rec["branch"] == "evo/g1-0" and rec["operator"] in OPERATORS and rec["gates"]["ok"] is None
     )
-    assert (repo / ".worktrees" / "evo-g1-0" / "brief.md").exists()
+    # the brief lives under runs/, not in the worktree the agent commits
+    assert (runs / "agents" / "evo-g1-0" / "brief.md").exists()
+    assert not (repo / ".worktrees" / "evo-g1-0" / "brief.md").exists()
+    assert rec["agent_dir"] == str(runs / "agents" / "evo-g1-0")
     branches = subprocess.run(
         ["git", "branch", "--list", "evo/*"], cwd=repo, capture_output=True, text=True, check=False
     ).stdout
@@ -241,9 +273,9 @@ def test_run_generation_survives_judge_failure(tmp_path, monkeypatch):
     ev = Evolution(repo=repo, clip="unused.mov", dry_run=False, population=3, judge=BoomJudge())
     monkeypatch.setattr(ev, "_prepare_worktree", lambda wt: None)
 
-    def fake_agent(wt, brief):
+    def fake_agent(wt, brief, agent_dir):
         _commit(wt, "src/obs_lsd/halo.py", "rays = 12\n")
-        return True, "ok"
+        return True, "ok", 2.5
 
     monkeypatch.setattr(ev, "_run_agent", fake_agent)
     monkeypatch.setattr("obs_lsd.rig.gates.run_checks", lambda cwd, timeout_s=600: (True, ""))

@@ -116,6 +116,15 @@ def _git(repo: Path, *args: str) -> str:
     ).stdout.strip()
 
 
+def agent_cost(path: Path) -> float:
+    """`total_cost_usd` out of a claude -p --output-format json dump. This is
+    the dominant cost of a run and OpenRouter knows nothing about it."""
+    try:
+        return float(json.loads(path.read_text()).get("total_cost_usd") or 0.0)
+    except (OSError, AttributeError, TypeError, ValueError):
+        return 0.0
+
+
 def scope_violations(repo: Path, parent_sha: str, child_sha: str) -> list[str]:
     """Paths the child touched that are not in ALLOWED_PATHS. Run against the
     main repo, not the child's worktree - the child controls its worktree."""
@@ -132,6 +141,7 @@ class Evolution:
     population: int = 3
     claude_cmd: str = "claude"
     timeout_s: int = 1200
+    max_budget_usd: float = 5.0
     log: list[str] = field(default_factory=list)
 
     def __post_init__(self):
@@ -232,24 +242,31 @@ class Evolution:
         p = wt / "techniques.md"
         return p.read_text() if p.exists() else ""
 
-    def _run_agent(self, wt: Path, brief: str) -> tuple[bool, str]:
-        (wt / "brief.md").write_text(brief)
+    def _run_agent(self, wt: Path, brief: str, agent_dir: Path) -> tuple[bool, str, float]:
+        """Run the mutation agent in `wt`. The brief and the agent's JSON go to
+        `agent_dir` (under runs/), never into the worktree the agent commits."""
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        (agent_dir / "brief.md").write_text(brief)
         if self.dry_run:
-            return True, "dry-run"
+            return True, "dry-run", 0.0
+        out_path = agent_dir / "agent-output.json"
         cmd = [
             self.claude_cmd,
             "-p",
             brief,
             "--output-format",
             "json",
+            "--max-budget-usd",
+            str(self.max_budget_usd),
             "--dangerously-skip-permissions",
         ]
-        # don't let this claude's own CLAUDE_CODE_*/CLAUDECODE env leak into the
-        # child claude -p, and never let it read our stdin
+        # don't let this claude's own CLAUDE_CODE_*/CLAUDECODE env, or our
+        # OpenRouter key, leak into the child claude -p, and never let it read
+        # our stdin. Everything else is inherited: claude needs its own auth.
         env = {
             k: v
             for k, v in os.environ.items()
-            if not (k.startswith("CLAUDE_CODE_") or k == "CLAUDECODE")
+            if not (k.startswith("CLAUDE_CODE_") or k in ("CLAUDECODE", "OPENROUTER_API_KEY"))
         }
         try:
             r = subprocess.run(
@@ -265,12 +282,12 @@ class Evolution:
         except subprocess.TimeoutExpired as e:
             if e.stdout:
                 out = e.stdout if isinstance(e.stdout, str) else e.stdout.decode("utf-8", "replace")
-                (wt / "agent-output.json").write_text(out)
-            return False, "agent timeout"
+                out_path.write_text(out)
+            return False, "agent timeout", agent_cost(out_path)
         except OSError as e:
-            return False, f"agent failed: {e}"
-        (wt / "agent-output.json").write_text(r.stdout)
-        return r.returncode == 0, (r.stderr or r.stdout)[-500:]
+            return False, f"agent failed: {e}", 0.0
+        out_path.write_text(r.stdout)
+        return r.returncode == 0, (r.stderr or r.stdout)[-500:], agent_cost(out_path)
 
     def run_generation(self, gen: int) -> list[dict]:
         survivors = select_survivors(self.ledger.records(), self.population)
@@ -291,6 +308,8 @@ class Evolution:
                 "run_dir": None,
                 "cost_usd": 0.0,
                 "agent": None,
+                "agent_cost_usd": 0.0,
+                "agent_dir": None,
             }
             stage = "worktree setup"
             try:
@@ -340,8 +359,11 @@ class Evolution:
                 self._say(f"[g{gen}] {branch} <- {parent['id']} via {operator}")
 
                 stage = "agent"
-                agent_ok, agent_msg = self._run_agent(wt, brief)
+                agent_dir = self.runs / "agents" / branch.replace("/", "-")
+                rec["agent_dir"] = str(agent_dir)
+                agent_ok, agent_msg, spent = self._run_agent(wt, brief, agent_dir)
                 rec["agent"] = agent_msg
+                rec["agent_cost_usd"] = spent
                 if not self.dry_run:
                     sha = self._sha(branch)
                     if not agent_ok or sha == parent["sha"]:
@@ -435,14 +457,20 @@ class Evolution:
             else:
                 flat = "; ".join(" ".join(reason.split()) for reason in r["gates"]["reasons"])
                 gates = f"FAIL {flat}"
+            cost = f"judge ${r.get('cost_usd', 0):.2f} / agent ${r.get('agent_cost_usd', 0):.2f}"
             self._say(
-                f"{r['id']:28s} {r['operator']:18s} {gates:40.40s} {s:14s} {ms:5.1f}ms  {r.get('run_dir') or ''}"
+                f"{r['id']:28s} {r['operator']:18s} {gates:40.40s} {s:14s} {ms:5.1f}ms  "
+                f"{cost:26s} {r.get('run_dir') or ''}"
             )
         best = select_survivors(self.ledger.records(), 1)
         if best and best[0].get("run_dir"):
             self._say(
                 f"champion: {best[0]['id']} total {best[0]['score']['total']:.0f}  sheet: {best[0]['run_dir']}/sheet.png"
             )
+        recs_all = self.ledger.records()
+        judge_total = sum(r.get("cost_usd", 0) or 0 for r in recs_all)
+        agent_total = sum(r.get("agent_cost_usd", 0) or 0 for r in recs_all)
         self._say(
-            f"openrouter spend so far: ${sum(r.get('cost_usd', 0) for r in self.ledger.records()):.2f}"
+            f"spend so far: judge ${judge_total:.2f} (openrouter) / "
+            f"agent ${agent_total:.2f} (claude) / total ${judge_total + agent_total:.2f}"
         )

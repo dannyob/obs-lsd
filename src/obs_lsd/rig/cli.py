@@ -111,15 +111,27 @@ def baseline(clip, judge_model, samples):
 @click.option(
     "--start-gen", default=None, type=int, help="Generation number to start at (default: next)"
 )
-def evolve(clip, gens, population, judge_model, dry_run, start_gen):
+@click.option(
+    "--agent-budget",
+    default=5.0,
+    show_default=True,
+    help="Per-child spend cap handed to claude -p as --max-budget-usd",
+)
+def evolve(clip, gens, population, judge_model, dry_run, start_gen, agent_budget):
     """Run generations of the evolutionary loop."""
     from obs_lsd.rig.evolve import Evolution
     from obs_lsd.rig.judge import DEFAULT_MODEL, OpenRouterJudge
 
-    judge_obj = None if dry_run else OpenRouterJudge(model=judge_model or DEFAULT_MODEL)
     ev = Evolution(
-        repo=Path.cwd(), clip=clip, judge=judge_obj, dry_run=dry_run, population=population
+        repo=Path.cwd(),
+        clip=clip,
+        judge=None,
+        dry_run=dry_run,
+        population=population,
+        max_budget_usd=agent_budget,
     )
+    if not dry_run:
+        ev.judge = OpenRouterJudge(model=judge_model or DEFAULT_MODEL)
     first = (
         start_gen
         if start_gen is not None
