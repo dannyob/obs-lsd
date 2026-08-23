@@ -152,7 +152,7 @@ def test_video_input_to_video_output(tmp_path, monkeypatch):
     import obs_lsd.cli as climod
 
     class FakePipeline:
-        timings = {"total": 1.0}
+        timings = {"total": 1.0}  # noqa: RUF012
         frozen = False
 
         def __init__(self, cfg, segmenter=None):
