@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import click
@@ -27,21 +28,52 @@ def render(clip, out_dir, width, height):
 
 
 @rig.command()
-def judge():
+@click.argument("run_dir", type=click.Path(exists=True))
+@click.option("--samples", default=3, show_default=True)
+@click.option("--judge-model", default=None)
+def judge(run_dir, samples, judge_model):
     """Score a run directory with the vision judge."""
-    raise click.ClickException("not implemented yet")
+    from obs_lsd.rig.judge import DEFAULT_MODEL, OpenRouterJudge
+
+    j = OpenRouterJudge(model=judge_model or DEFAULT_MODEL)
+    s = j.score(Path(run_dir), samples=samples)
+    click.echo(
+        f"seamless={s.seamless:.0f} distracting={s.distracting:.0f} ornate={s.ornate:.0f} "
+        f"total={s.total:.0f}/90  (${j.cost_usd:.3f})"
+    )
+    click.echo(f"notes: {s.notes}\ntop_fix: {s.top_fix}")
 
 
 @rig.command()
-def pairwise():
+@click.argument("run_a", type=click.Path(exists=True))
+@click.argument("run_b", type=click.Path(exists=True))
+@click.option("--votes", default=3, show_default=True)
+@click.option("--judge-model", default=None)
+def pairwise(run_a, run_b, votes, judge_model):
     """A/B two run directories."""
-    raise click.ClickException("not implemented yet")
+    from obs_lsd.rig.judge import DEFAULT_MODEL, OpenRouterJudge
+
+    j = OpenRouterJudge(model=judge_model or DEFAULT_MODEL)
+    res = j.pairwise(Path(run_a), Path(run_b), votes=votes)
+    click.echo(json.dumps(res, indent=2))
 
 
 @rig.command()
-def calibrate():
-    """Compare judge models against human picks."""
-    raise click.ClickException("not implemented yet")
+@click.argument("pairs_json", type=click.Path(exists=True))
+@click.option(
+    "--models",
+    default="anthropic/claude-opus-5,google/gemini-3.1-pro-preview,openai/gpt-5.5",
+    show_default=True,
+)
+def calibrate(pairs_json, models):
+    """Compare judge models against human picks. pairs_json: [{"a":dir,"b":dir,"human":"a"|"b"}]"""
+    from obs_lsd.rig.judge import OpenRouterJudge
+
+    pairs = json.loads(Path(pairs_json).read_text())
+    j = OpenRouterJudge()
+    for m, agree in j.calibrate(pairs, models.split(",")).items():
+        click.echo(f"{m}: agreement {agree:.0%}")
+    click.echo(f"cost ${j.cost_usd:.2f}")
 
 
 @rig.command()
