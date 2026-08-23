@@ -70,15 +70,15 @@ are working without a camera or a preview window.
 that draws it. It needs a recorded clip of a face to work from: open
 QuickTime Player, File > New Movie Recording, pick your camera, record 20-30
 seconds moving your head around under normal lighting, and save it under
-`clips/` (`clips/danny-01.mov`, say — the directory is gitignored, it's
-local test data).
+`clips/` (`clips/danny-01.mov`, say). The directory is gitignored; it's
+local test data.
 
 `make baseline CLIP=clips/danny-01.mov` renders that clip through `main`,
 scores the result with an LLM judge, and writes `runs/baseline.json`. Every
 later generation is compared against this. `make eval CLIP=clips/x.mov`
 does the same render-then-judge pass against whatever is currently checked
-out, without touching the baseline — useful for scoring a branch by hand
-before committing to a full evolution run.
+out, without touching the baseline. It's useful for scoring a branch by
+hand before committing to a full evolution run.
 
 `make evolve CLIP=clips/danny-01.mov GENS=N` runs the actual loop: each
 generation spins up one or more `evo/gN-k` branches in their own worktrees
@@ -107,15 +107,24 @@ To promote a generation's winner into `main`, just merge its branch:
 once you do — it's ordinary code, and the merge commit is the record of
 why it won.
 
-`obs-lsd-rig calibrate` checks judge consistency by scoring the same pair
-of runs multiple times and reporting how much the score moves around; run
-it before trusting small score deltas between generations. Every rig
-command that calls the judge takes `--judge-model` to swap the model (it
-defaults to a fixed OpenRouter model id in `judge.py`).
+`obs-lsd-rig calibrate PAIRS_JSON [--models a,b,c]` checks whether the
+judge's pairwise picks agree with yours. Make `PAIRS_JSON` by hand: render
+two variants you want to compare (`make eval` on each, or two `render`
+calls), look at their `sheet.png`s, and write a JSON list of
+`{"a": run_dir, "b": run_dir, "human": "a"|"b"}` objects, one per pair you
+ranked yourself. `calibrate` then runs a pairwise A/B on each pair for
+every model in `--models` and prints, per model, how often its pick
+matched your `human` pick. Run it before trusting small score deltas
+between generations. Every rig command that calls the judge also takes
+`--judge-model` to swap the model for a single call (it defaults to a
+fixed OpenRouter model id in `judge.py`).
 
-The judge reads its OpenRouter key with `pass show openrouter/api-key` —
-set that up first (`pass insert openrouter/api-key`). Roughly: a single
-judge call costs about $0.09, and one full evolution child (worktree setup
-+ agent edit + render + judge) costs somewhere around $0.30-3 depending on
-how many turns the coding agent needs — the agent's own token spend
-dwarfs the judge's.
+The judge reads its OpenRouter key with `pass show openrouter/api-key`;
+set that up first (`pass insert openrouter/api-key`). There are two
+separate bills here. The judge is billed to the OpenRouter key: about
+$0.09 per call, and a score samples 3 calls by default, so about $0.30 to
+score one child. The coding agent's turns are `claude -p` and are billed
+to whatever authenticates `claude` on your machine (your Claude plan or an
+API key), not OpenRouter; that side runs a few dollars per child in
+practice, as reported by `total_cost_usd` in each worktree's
+`agent-output.json`.
