@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -26,7 +27,7 @@ def test_build_brief_fills_placeholders():
         {"frames": 10},
         "- g0: nothing",
     )
-    assert "{" not in b.replace("{}", "") or "{operator}" not in b
+    assert re.search(r"\{[a-z_]+\}", b) is None
     assert (
         "evo/g1-0" in b
         and "TOP_FIX: T" in b
@@ -66,6 +67,12 @@ def test_child_plan_rotates_operators_and_crossover():
     assert [c["operator"] for c in plan1] == [OPERATORS[1], OPERATORS[2], OPERATORS[3]]
     plan2 = child_plan(2, surv)
     assert plan2[2]["operator"] == "crossover" and plan2[2]["parents"] == ["p0", "p1"]
+
+
+def test_child_plan_crossover_lands_on_last_child_with_two_survivors():
+    surv = [{"id": "p0"}, {"id": "p1"}]
+    plan = child_plan(2, surv)
+    assert plan[1]["operator"] == "crossover" and plan[1]["parents"] == ["p0", "p1"]
 
 
 def _repo(tmp_path):
@@ -331,3 +338,97 @@ def test_prepare_worktree_failure_is_ledgered(tmp_path, monkeypatch):
     assert rec["gates"]["ok"] is False
     assert rec["gates"]["reasons"][0].startswith("worktree setup failed")
     assert "boom" in rec["gates"]["reasons"][0]
+
+
+def test_crossover_falls_back_to_ornate_when_one_survivor_is_an_ancestor(tmp_path):
+    repo = _repo(tmp_path)
+    sha0 = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    (repo / "a.txt").write_text("a\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "c1"],
+        cwd=repo,
+        check=True,
+    )
+    sha1 = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    (repo / "b.txt").write_text("b\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "c2"],
+        cwd=repo,
+        check=True,
+    )
+    sha2 = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    runs = repo / "runs"
+    runs.mkdir()
+    (runs / "baseline.json").write_text(
+        json.dumps(
+            {
+                "run_dir": f"runs/baseline-{sha0}",
+                "stats": {"ms_total_mean": 1.0, "no_head_frac": 0.0, "jump_count": 0},
+                "score": {
+                    "seamless": 1,
+                    "distracting": 1,
+                    "ornate": 1,
+                    "total": 3,
+                    "notes": "",
+                    "top_fix": "",
+                },
+            }
+        )
+    )
+    common = {"gates": {"ok": True, "reasons": []}, "metrics_summary": {"ms_total_mean": 1.0}}
+    ledger_seed = [
+        {
+            "id": "hi",
+            "branch": "evo/hi",
+            "parent": "baseline",
+            "generation": 1,
+            "operator": "tune",
+            "sha": sha1,  # ancestor of sha2
+            "score": {"total": 50},
+            "run_dir": "runs/hi",
+            "cost_usd": 0.0,
+            **common,
+        },
+        {
+            "id": "lo",
+            "branch": "evo/lo",
+            "parent": "baseline",
+            "generation": 1,
+            "operator": "tune",
+            "sha": sha2,
+            "score": {"total": 40},
+            "run_dir": "runs/lo",
+            "cost_usd": 0.0,
+            **common,
+        },
+    ]
+    (runs / "ledger.json").write_text(json.dumps(ledger_seed))
+
+    ev = Evolution(repo=repo, clip="unused.mov", dry_run=True, population=3)
+    recs = ev.run_generation(2)
+    assert len(recs) == 2
+    fallback_rec = recs[1]
+    assert fallback_rec["operator"] == "ornate"
+    assert fallback_rec["note"].startswith("crossover skipped")
+    assert fallback_rec["parent"] == "hi"

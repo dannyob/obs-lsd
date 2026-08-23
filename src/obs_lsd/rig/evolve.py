@@ -62,10 +62,11 @@ def child_plan(gen: int, survivors: list[dict]) -> list[dict]:
         plan.append(
             {"parent": parent["id"], "k": k, "operator": OPERATORS[(gen + k) % len(OPERATORS)]}
         )
-    if gen % 2 == 0 and len(survivors) >= 2 and len(plan) >= 3:
-        plan[2] = {
+    if gen % 2 == 0 and len(survivors) >= 2:
+        last = len(plan) - 1
+        plan[last] = {
             "parent": survivors[0]["id"],
-            "k": 2,
+            "k": last,
             "operator": "crossover",
             "parents": [survivors[0]["id"], survivors[1]["id"]],
         }
@@ -82,7 +83,9 @@ class Ledger:
 
     def append(self, rec: dict) -> None:
         self._recs.append(rec)
-        self.path.write_text(json.dumps(self._recs, indent=2))
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        tmp.write_text(json.dumps(self._recs, indent=2))
+        os.replace(tmp, self.path)
 
     def by_id(self, id_: str) -> dict | None:
         return next((r for r in self._recs if r["id"] == id_), None)
@@ -215,12 +218,31 @@ class Evolution:
             "json",
             "--dangerously-skip-permissions",
         ]
+        # don't let this claude's own CLAUDE_CODE_*/CLAUDECODE env leak into the
+        # child claude -p, and never let it read our stdin
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if not (k.startswith("CLAUDE_CODE_") or k == "CLAUDECODE")
+        }
         try:
             r = subprocess.run(
-                cmd, cwd=wt, capture_output=True, text=True, timeout=self.timeout_s, check=False
+                cmd,
+                cwd=wt,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout_s,
+                check=False,
+                stdin=subprocess.DEVNULL,
+                env=env,
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as e:
+            if e.stdout:
+                out = e.stdout if isinstance(e.stdout, str) else e.stdout.decode("utf-8", "replace")
+                (wt / "agent-output.json").write_text(out)
             return False, "agent timeout"
+        except OSError as e:
+            return False, f"agent failed: {e}"
         (wt / "agent-output.json").write_text(r.stdout)
         return r.returncode == 0, (r.stderr or r.stdout)[-500:]
 
@@ -256,13 +278,28 @@ class Evolution:
                 if operator == "crossover":
                     stage = "crossover"
                     a, b = (self.ledger.by_id(p) for p in child["parents"])
-                    base = _git(self.repo, "merge-base", a["sha"], b["sha"])
-                    extra = (
-                        "Diff A:\n"
-                        + _git(self.repo, "diff", base, a["sha"])
-                        + "\n\nDiff B:\n"
-                        + _git(self.repo, "diff", base, b["sha"])
-                    )
+                    try:
+                        is_anc = subprocess.run(
+                            ["git", "merge-base", "--is-ancestor", a["sha"], b["sha"]],
+                            cwd=self.repo,
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                        )
+                        if is_anc.returncode == 0:
+                            raise RuntimeError("survivors[0] is an ancestor of survivors[1]")
+                        base = _git(self.repo, "merge-base", a["sha"], b["sha"])
+                        extra = (
+                            "Diff A:\n"
+                            + _git(self.repo, "diff", base, a["sha"])
+                            + "\n\nDiff B:\n"
+                            + _git(self.repo, "diff", base, b["sha"])
+                        )
+                    except (subprocess.CalledProcessError, RuntimeError) as e:
+                        operator = "ornate"
+                        rec["operator"] = operator
+                        rec["note"] = f"crossover skipped: {e!s:.200}"
+                        extra = ""
 
                 stage = "brief"
                 brief = build_brief(
@@ -357,20 +394,20 @@ class Evolution:
                 else "-"
             )
             ms = r["metrics_summary"].get("ms_total_mean", 0.0)
-            gates = (
-                "ok"
-                if r["gates"]["ok"]
-                else (
-                    "?" if r["gates"]["ok"] is None else "FAIL " + "; ".join(r["gates"]["reasons"])
-                )
-            )
+            if r["gates"]["ok"]:
+                gates = "ok"
+            elif r["gates"]["ok"] is None:
+                gates = "?"
+            else:
+                flat = "; ".join(" ".join(reason.split()) for reason in r["gates"]["reasons"])
+                gates = f"FAIL {flat}"
             self._say(
                 f"{r['id']:28s} {r['operator']:18s} {gates:40.40s} {s:14s} {ms:5.1f}ms  {r.get('run_dir') or ''}"
             )
         best = select_survivors(self.ledger.records(), 1)
-        if best:
+        if best and best[0].get("run_dir"):
             self._say(
-                f"champion: {best[0]['id']} total {best[0]['score']['total']:.0f}  sheet: {best[0].get('run_dir')}/sheet.png"
+                f"champion: {best[0]['id']} total {best[0]['score']['total']:.0f}  sheet: {best[0]['run_dir']}/sheet.png"
             )
         self._say(
             f"openrouter spend so far: ${sum(r.get('cost_usd', 0) for r in self.ledger.records()):.2f}"
