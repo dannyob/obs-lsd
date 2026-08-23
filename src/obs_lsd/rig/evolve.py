@@ -15,6 +15,25 @@ from obs_lsd.rig.metrics import metrics_table
 
 OPERATORS = ["fix_top_complaint", "new_technique", "tune", "simplify", "ornate"]
 
+#: The only paths a child commit may touch. Everything that decides whether a
+#: child passes - the rig, the lint config, the packaging - is off limits, so a
+#: candidate cannot rewrite its own exam.
+ALLOWED_PATHS = {
+    "src/obs_lsd/halo.py",
+    "src/obs_lsd/compose.py",
+    "src/obs_lsd/segment.py",
+    "src/obs_lsd/track.py",
+    "src/obs_lsd/pipeline.py",
+    "src/obs_lsd/cli.py",
+    "tests/test_halo.py",
+    "tests/test_compose.py",
+    "tests/test_segment.py",
+    "tests/test_track.py",
+    "tests/test_pipeline.py",
+    "tests/test_cli.py",
+    "techniques.md",
+}
+
 
 def operator_text(name: str) -> str:
     text = load_prompt("operators.md")
@@ -95,6 +114,13 @@ def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
         ["git", *args], cwd=repo, capture_output=True, text=True, check=True
     ).stdout.strip()
+
+
+def scope_violations(repo: Path, parent_sha: str, child_sha: str) -> list[str]:
+    """Paths the child touched that are not in ALLOWED_PATHS. Run against the
+    main repo, not the child's worktree - the child controls its worktree."""
+    out = _git(repo, "diff", "--name-only", f"{parent_sha}..{child_sha}")
+    return sorted(p for p in out.splitlines() if p.strip() and p not in ALLOWED_PATHS)
 
 
 @dataclass
@@ -327,7 +353,7 @@ class Evolution:
                         rec["sha"] = sha
                         rec["id"] = f"{rec['id']}-{sha}"
                         stage = "evaluate"
-                        self._evaluate(rec, wt)
+                        self._evaluate(rec, wt, parent)
             except Exception as e:  # noqa: BLE001 - any per-child failure must not abort the run
                 rec["gates"] = {"ok": False, "reasons": [f"{stage} failed: {e!s:.300}"]}
                 self._say(f"[g{gen}] {rec['branch']} FAILED at {stage}: {e!s:.200}")
@@ -336,8 +362,13 @@ class Evolution:
         self._table(gen, results)
         return results
 
-    def _evaluate(self, rec: dict, wt: Path) -> None:
+    def _evaluate(self, rec: dict, wt: Path, parent: dict) -> None:
         from obs_lsd.rig.gates import gate, run_checks
+
+        bad = scope_violations(self.repo, parent["sha"], rec["sha"])
+        if bad:
+            rec["gates"] = {"ok": False, "reasons": ["out-of-scope changes: " + ", ".join(bad)]}
+            return
 
         ok, tail = run_checks(wt, timeout_s=600)
         if not ok:

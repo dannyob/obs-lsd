@@ -20,6 +20,14 @@ Metrics: {metrics_table}
 {rubric}
 
 ## Hard rules
+- Your commit may only touch these paths (`ALLOWED_PATHS` in
+  `src/obs_lsd/rig/evolve.py`): src/obs_lsd/halo.py, src/obs_lsd/compose.py,
+  src/obs_lsd/segment.py, src/obs_lsd/track.py, src/obs_lsd/pipeline.py,
+  src/obs_lsd/cli.py, tests/test_halo.py, tests/test_compose.py,
+  tests/test_segment.py, tests/test_track.py, tests/test_pipeline.py,
+  tests/test_cli.py, techniques.md. The rig checks
+  `git diff --name-only <parent>..<yours>` after you commit and fails the whole
+  round if anything else changed, so a stray file wastes the entire run.
 - Keep `uv run pytest -q` and `uv run ruff check . && uv run ruff format --check .` green.
 - Keep per-frame cost roughly flat: `make smoke` must still pass; do not add
   dependencies.

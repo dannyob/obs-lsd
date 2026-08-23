@@ -9,6 +9,7 @@ from obs_lsd.rig.evolve import (
     build_brief,
     child_plan,
     operator_text,
+    scope_violations,
     select_survivors,
 )
 
@@ -89,6 +90,82 @@ def _repo(tmp_path):
     return r
 
 
+def _head(repo):
+    return subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+def _commit(repo, rel, text):
+    p = repo / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", f"edit {rel}"],
+        cwd=repo,
+        check=True,
+    )
+    return _head(repo)
+
+
+def _seed_baseline(repo, run_dir, stats=None):
+    runs = repo / "runs"
+    runs.mkdir(exist_ok=True)
+    (runs / "baseline.json").write_text(
+        json.dumps(
+            {
+                "run_dir": run_dir,
+                "stats": stats or {"ms_total_mean": 30.0, "no_head_frac": 0.0, "jump_count": 2},
+                "score": {
+                    "seamless": 10,
+                    "distracting": 10,
+                    "ornate": 10,
+                    "total": 30,
+                    "notes": "n",
+                    "top_fix": "t",
+                },
+            }
+        )
+    )
+    return runs
+
+
+def test_scope_check_rejects_a_child_that_edited_the_rig(tmp_path):
+    repo = _repo(tmp_path)
+    parent = _head(repo)
+    child = _commit(repo, "src/obs_lsd/rig/x.py", "x = 1\n")
+    assert scope_violations(repo, parent, child) == ["src/obs_lsd/rig/x.py"]
+
+
+def test_scope_check_passes_a_child_that_only_edited_halo(tmp_path):
+    repo = _repo(tmp_path)
+    parent = _head(repo)
+    child = _commit(repo, "src/obs_lsd/halo.py", "rays = 12\n")
+    assert scope_violations(repo, parent, child) == []
+
+
+def test_evaluate_refuses_out_of_scope_child_before_running_checks(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    parent_sha = _head(repo)
+    child_sha = _commit(repo, "src/obs_lsd/rig/gates.py", "MS_FACTOR = 99\n")
+    _seed_baseline(repo, f"runs/baseline-{parent_sha}")
+    ev = Evolution(repo=repo, clip="unused.mov", dry_run=True, population=3)
+
+    def boom(*a, **k):
+        raise AssertionError("checks must not run for an out-of-scope child")
+
+    monkeypatch.setattr("obs_lsd.rig.gates.run_checks", boom)
+    rec = {"sha": child_sha, "gates": {"ok": None, "reasons": []}}
+    ev._evaluate(rec, repo, {"sha": parent_sha, "metrics_summary": {}})
+    assert rec["gates"]["ok"] is False
+    assert rec["gates"]["reasons"] == ["out-of-scope changes: src/obs_lsd/rig/gates.py"]
+
+
 def test_dry_run_generation_creates_branches_and_ledger(tmp_path):
     repo = _repo(tmp_path)
     runs = repo / "runs"
@@ -163,8 +240,12 @@ def test_run_generation_survives_judge_failure(tmp_path, monkeypatch):
 
     ev = Evolution(repo=repo, clip="unused.mov", dry_run=False, population=3, judge=BoomJudge())
     monkeypatch.setattr(ev, "_prepare_worktree", lambda wt: None)
-    monkeypatch.setattr(ev, "_run_agent", lambda wt, brief: (True, "ok"))
-    monkeypatch.setattr(ev, "_sha", lambda ref: "cafefeed")
+
+    def fake_agent(wt, brief):
+        _commit(wt, "src/obs_lsd/halo.py", "rays = 12\n")
+        return True, "ok"
+
+    monkeypatch.setattr(ev, "_run_agent", fake_agent)
     monkeypatch.setattr("obs_lsd.rig.gates.run_checks", lambda cwd, timeout_s=600: (True, ""))
 
     real_run = subprocess.run
