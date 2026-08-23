@@ -88,7 +88,7 @@ All written as PNG into the run dir.
   `{"a": run_dir, "b": run_dir, "human": "a"|"b"}`; prints agreement % per model.
 - API key: `OPENROUTER_API_KEY` env if set, else `pass show openrouter/api-key`.
   Never printed. Cost: usage tokens from the response are summed and printed.
-- HTTP via `httpx` (dependency, rig extra); transport injectable for tests.
+- HTTP via `httpx` (new dependency, `rig` extra in pyproject); transport injectable for tests.
 
 ### gates.py — pure
 `gate(cand, base) -> (ok: bool, reasons: list[str])` with the four rules above;
@@ -107,8 +107,9 @@ One generation:
 4. write brief from `mutate.md` (rubric, parent score+notes+top_fix, lineage
    `techniques.md`, operator text, hard rules: tests+ruff green, no new deps
    without saying so, commit with message, append to techniques.md).
-5. `claude -p "$(cat brief)" --max-turns 40 --dangerously-skip-permissions` run
-   with cwd = worktree; timeout 20 min. Capture transcript to run dir.
+5. `claude -p "$(cat brief)" --output-format json --dangerously-skip-permissions` run
+   with cwd = worktree; wall-clock timeout 20 min (`--max-turns` does not exist in
+   claude 2.1.x); optional `--max-budget-usd`. Capture the JSON result to the run dir.
 6. if no new commit → ledger "no change", discard. Else render → gate → score
    (skip score if gate fails) → ledger.
 7. selection; print table (id, operator, gates, seamless/distracting/ornate/total,
