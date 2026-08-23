@@ -103,12 +103,44 @@ def baseline(clip, judge_model, samples):
 
 
 @rig.command()
-def evolve():
+@click.argument("clip", type=click.Path(exists=True))
+@click.option("--gens", default=1, show_default=True)
+@click.option("--population", default=3, show_default=True)
+@click.option("--judge-model", default=None)
+@click.option("--dry-run", is_flag=True)
+@click.option(
+    "--start-gen", default=None, type=int, help="Generation number to start at (default: next)"
+)
+def evolve(clip, gens, population, judge_model, dry_run, start_gen):
     """Run generations of the evolutionary loop."""
-    raise click.ClickException("not implemented yet")
+    from obs_lsd.rig.evolve import Evolution
+    from obs_lsd.rig.judge import DEFAULT_MODEL, OpenRouterJudge
+
+    judge_obj = None if dry_run else OpenRouterJudge(model=judge_model or DEFAULT_MODEL)
+    ev = Evolution(
+        repo=Path.cwd(), clip=clip, judge=judge_obj, dry_run=dry_run, population=population
+    )
+    first = (
+        start_gen
+        if start_gen is not None
+        else (max((r["generation"] for r in ev.ledger.records()), default=0) + 1)
+    )
+    for g in range(first, first + gens):
+        ev.run_generation(g)
 
 
 @rig.command()
 def prune():
-    """Remove worktrees of non-survivors."""
-    raise click.ClickException("not implemented yet")
+    """Remove worktrees of non-survivors (branches are kept)."""
+    import subprocess
+
+    from obs_lsd.rig.evolve import Evolution, select_survivors
+
+    ev = Evolution(repo=Path.cwd(), clip="", dry_run=True)
+    keep = {
+        r["branch"].replace("/", "-") for r in select_survivors(ev.ledger.records(), ev.population)
+    }
+    for wt in (Path.cwd() / ".worktrees").glob("evo-*"):
+        if wt.name not in keep:
+            subprocess.run(["git", "worktree", "remove", "--force", str(wt)], check=False)
+            click.echo(f"removed {wt.name}")
