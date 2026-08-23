@@ -11,6 +11,7 @@ dependencies = [
     "opencv-python>=4.10,<6",
     "mediapipe>=0.10,<1.0",
     "pyvirtualcam>=0.11",
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
@@ -18,6 +19,7 @@ dev = ["pytest>=8", "ruff>=0.5"]
 
 [project.scripts]
 obs-lsd = "obs_lsd.cli:cli"
+obs-lsd-rig = "obs_lsd.rig.cli:rig"
 
 [build-system]
 requires = ["uv_build>=0.9.6,<0.14"]

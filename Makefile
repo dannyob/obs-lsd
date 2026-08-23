@@ -1,4 +1,4 @@
-.PHONY: help venv install-dev test lint format models smoke run clean
+.PHONY: help venv install-dev test lint format models smoke run clean baseline eval judge-smoke evolve
 .DEFAULT_GOAL := help
 UV := uv
 MODELS := src/obs_lsd/models
@@ -47,3 +47,16 @@ run: models ## Run live with preview + virtual camera
 clean: ## Remove caches
 	\rm -rf .pytest_cache .ruff_cache dist build
 	find . -name __pycache__ -type d -exec \rm -rf {} +
+
+baseline: models ## Render + judge main on CLIP, save runs/baseline.json (CLIP=clips/x.mov)
+	$(UV) run obs-lsd-rig baseline $(CLIP)
+
+eval: models ## Render + judge the current tree on CLIP
+	$(UV) run obs-lsd-rig render $(CLIP) --out runs/$$(git rev-parse --abbrev-ref HEAD | tr / -)-$$(git rev-parse --short HEAD) && \
+	$(UV) run obs-lsd-rig judge runs/$$(git rev-parse --abbrev-ref HEAD | tr / -)-$$(git rev-parse --short HEAD)
+
+judge-smoke: ## One real judge call against the latest run dir
+	$(UV) run obs-lsd-rig judge $$(ls -dt runs/*/ | head -1) --samples 1
+
+evolve: models ## Run GENS generations of the loop on CLIP
+	$(UV) run obs-lsd-rig evolve $(CLIP) --gens $(GENS)

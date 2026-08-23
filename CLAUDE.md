@@ -16,12 +16,45 @@ Zoom and OBS.
 - `pipeline.py` — wires the above modules together
 - `cli.py` — click entry point (`obs-lsd`)
 
+### Evaluation rig (src/obs_lsd/rig/)
+
+- `render.py` — runs the pipeline headless over a clip, writes a run dir
+  (`sheet.png`, `crops.png`, `motion.png`, `out.mp4`, `metrics.json`)
+- `metrics.py` — per-frame stats (head-loss fraction, jump/jitter, timings)
+  that feed the gates and the judge's notes
+- `images.py` — builds the sheet/crops/motion composite images from a run
+- `judge.py` — OpenRouter LLM judge: rubric scoring, pairwise A/B, cost
+  tracking; reads the API key with `pass show openrouter/api-key`
+- `gates.py` — pass/fail checks (head still detected, ms/frame against
+  parent and baseline, halo-delta jump count, tests/lint clean) with
+  human-readable reasons
+- `evolve.py` — the evolutionary loop driver: worktrees, agent briefs,
+  mutation operators, crossover, `runs/ledger.json`, survivor selection,
+  the results table, `prune`
+- `cli.py` — click entry point (`obs-lsd-rig`: render, judge, pairwise,
+  calibrate, baseline, evolve, prune)
+
 ## Make targets
 
-`venv install-dev test lint format models smoke run`
+`venv install-dev test lint format models smoke run baseline eval evolve
+judge-smoke clean`
 
 ## Working here
 
 TDD: write a failing test, then the code, then run it. Run `make smoke`
 before claiming a change works end to end — passing unit tests alone is not
 enough. mediapipe must stay `<1.0` on macOS; 1.x crashes.
+
+Children fork from the sha recorded in `runs/baseline.json`, not from
+`HEAD`, so re-run `make baseline CLIP=…` after merging anything into
+`main`; `evolve` refuses a stale baseline unless you pass
+`--allow-stale-baseline`. Agents spawned by `evolve` are meant to stay in
+their own `evo/*` worktree, and a child whose commit touches anything
+outside `ALLOWED_PATHS` (`evolve.py`) is discarded — but that is a
+convention plus a diff check, not a sandbox: the worktree shares the
+repo's `.git` and the agent runs with `--dangerously-skip-permissions`.
+What holds is that the driver never checks out `main`, and promotion is a
+`git merge` a human types. Judge notes, `techniques.md` and sibling diffs
+are model-written text pasted into the next agent's brief, so treat the
+loop as a prompt-injection path and don't aim it at anything untrusted.
+`runs/` and `clips/` are local and gitignored, not shipped with the repo.

@@ -7,3 +7,7 @@ src/obs_lsd/models/
 tests/data/
 *.png
 clips/
+runs/
+.worktrees/
+brief.md
+agent-output.json

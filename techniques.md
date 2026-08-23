@@ -1,0 +1,1 @@
+- g0: baseline — polar noise rays, light wrap, slow drift
