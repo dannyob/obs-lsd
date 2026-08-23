@@ -63,3 +63,59 @@ With the preview window focused, these keys work live:
 `make smoke` runs the pipeline headless against `tests/data/portrait.jpg`
 and writes `/tmp/obs-lsd-smoke.png`, so you can check the segmenter and halo
 are working without a camera or a preview window.
+
+## Evaluation rig
+
+`obs-lsd-rig` scores how the halo actually looks and can mutate the code
+that draws it. It needs a recorded clip of a face to work from: open
+QuickTime Player, File > New Movie Recording, pick your camera, record 20-30
+seconds moving your head around under normal lighting, and save it under
+`clips/` (`clips/danny-01.mov`, say — the directory is gitignored, it's
+local test data).
+
+`make baseline CLIP=clips/danny-01.mov` renders that clip through `main`,
+scores the result with an LLM judge, and writes `runs/baseline.json`. Every
+later generation is compared against this. `make eval CLIP=clips/x.mov`
+does the same render-then-judge pass against whatever is currently checked
+out, without touching the baseline — useful for scoring a branch by hand
+before committing to a full evolution run.
+
+`make evolve CLIP=clips/danny-01.mov GENS=N` runs the actual loop: each
+generation spins up one or more `evo/gN-k` branches in their own worktrees
+under `.worktrees/`, each seeded from the previous generation's best
+survivor. Inside each worktree a `claude -p --dangerously-skip-permissions`
+agent reads a brief (parent score, judge notes, the running
+`techniques.md` log) and edits the halo/compose code to try one new idea,
+commits it, then the rig runs that worktree's own tests and lint, renders
+the clip with the candidate's code, checks the render against gates
+(head detected, no scale blowups, timing budget, tests/lint clean), and —
+if it gates clean — judges it. Only the child worktrees' code ever runs
+this way; the controlling process and `main` are never touched by an
+agent. Do not run `evolve` against a dirty working tree — the driver reads
+`HEAD` as the parent sha for the first generation.
+
+Every attempt, whether it gates clean or not, gets a record appended to
+`runs/ledger.json`: branch, parent, generation, operator, gate result and
+reasons, judge score (seamless/distracting/ornate/total plus notes and a
+top-fix suggestion), the render's metrics summary, and cost. The render
+itself lands in `runs/<branch>-<sha>/`, with `sheet.png` (a timestamped
+grid of frames), `crops.png` (zoomed-in problem areas), `motion.png`, the
+composited `out.mp4`, `metrics.json`, and `score.json`.
+
+To promote a generation's winner into `main`, just merge its branch:
+`git merge evo/g3-1`. Nothing about the rig is special about that branch
+once you do — it's ordinary code, and the merge commit is the record of
+why it won.
+
+`obs-lsd-rig calibrate` checks judge consistency by scoring the same pair
+of runs multiple times and reporting how much the score moves around; run
+it before trusting small score deltas between generations. Every rig
+command that calls the judge takes `--judge-model` to swap the model (it
+defaults to a fixed OpenRouter model id in `judge.py`).
+
+The judge reads its OpenRouter key with `pass show openrouter/api-key` —
+set that up first (`pass insert openrouter/api-key`). Roughly: a single
+judge call costs about $0.09, and one full evolution child (worktree setup
++ agent edit + render + judge) costs somewhere around $0.30-3 depending on
+how many turns the coding agent needs — the agent's own token spend
+dwarfs the judge's.
