@@ -117,9 +117,16 @@ def baseline(clip, judge_model, samples):
     show_default=True,
     help="Per-child spend cap handed to claude -p as --max-budget-usd",
 )
-def evolve(clip, gens, population, judge_model, dry_run, start_gen, agent_budget):
+@click.option(
+    "--allow-stale-baseline",
+    is_flag=True,
+    help="Run even though runs/baseline.json does not describe HEAD",
+)
+def evolve(
+    clip, gens, population, judge_model, dry_run, start_gen, agent_budget, allow_stale_baseline
+):
     """Run generations of the evolutionary loop."""
-    from obs_lsd.rig.evolve import Evolution
+    from obs_lsd.rig.evolve import Evolution, baseline_is_stale
     from obs_lsd.rig.judge import DEFAULT_MODEL, OpenRouterJudge
 
     ev = Evolution(
@@ -130,6 +137,17 @@ def evolve(clip, gens, population, judge_model, dry_run, start_gen, agent_budget
         population=population,
         max_budget_usd=agent_budget,
     )
+    base_sha = ev.baseline_sha()
+    if not allow_stale_baseline and baseline_is_stale(ev.repo, base_sha):
+        import subprocess
+
+        head = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=False
+        ).stdout.strip()
+        raise SystemExit(
+            f"baseline is {base_sha} but HEAD is {head}: children would fork from {base_sha}.\n"
+            f"Re-run `make baseline CLIP={clip}`, or pass --allow-stale-baseline."
+        )
     if not dry_run:
         ev.judge = OpenRouterJudge(model=judge_model or DEFAULT_MODEL)
     first = (
@@ -138,7 +156,8 @@ def evolve(clip, gens, population, judge_model, dry_run, start_gen, agent_budget
         else (max((r["generation"] for r in ev.ledger.records()), default=0) + 1)
     )
     for g in range(first, first + gens):
-        ev.run_generation(g)
+        if not ev.run_generation(g):
+            raise SystemExit(1)
 
 
 @rig.command()

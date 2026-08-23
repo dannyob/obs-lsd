@@ -6,6 +6,7 @@ from pathlib import Path
 from obs_lsd.rig.evolve import (
     OPERATORS,
     Evolution,
+    baseline_is_stale,
     build_brief,
     child_plan,
     operator_text,
@@ -164,6 +165,26 @@ def test_evaluate_refuses_out_of_scope_child_before_running_checks(tmp_path, mon
     ev._evaluate(rec, repo, {"sha": parent_sha, "metrics_summary": {}})
     assert rec["gates"]["ok"] is False
     assert rec["gates"]["reasons"] == ["out-of-scope changes: src/obs_lsd/rig/gates.py"]
+
+
+def test_baseline_is_stale_only_when_head_has_moved(tmp_path):
+    repo = _repo(tmp_path)
+    assert baseline_is_stale(repo, _head(repo)) is False
+    old = _head(repo)
+    _commit(repo, "src/obs_lsd/halo.py", "rays = 12\n")
+    assert baseline_is_stale(repo, old) is True
+
+
+def test_generation_with_no_survivors_stops(tmp_path, capsys):
+    repo = _repo(tmp_path)
+    runs = _seed_baseline(repo, f"runs/baseline-{_head(repo)}")
+    # a baseline whose judge call failed leaves nothing to evolve from
+    (runs / "ledger.json").write_text(
+        json.dumps([{"id": "baseline", "generation": 0, "gates": {"ok": True}, "score": None}])
+    )
+    ev = Evolution(repo=repo, clip="unused.mov", dry_run=True, population=3)
+    assert ev.run_generation(1) == []
+    assert "no survivors to evolve from" in capsys.readouterr().out
 
 
 def test_run_agent_caps_budget_scrubs_the_key_and_records_cost(tmp_path, monkeypatch):
@@ -459,6 +480,24 @@ def test_prepare_worktree_failure_is_ledgered(tmp_path, monkeypatch):
     assert rec["gates"]["ok"] is False
     assert rec["gates"]["reasons"][0].startswith("worktree setup failed")
     assert "boom" in rec["gates"]["reasons"][0]
+
+
+def test_prepare_worktree_timeout_is_ledgered(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    _seed_baseline(repo, f"runs/baseline-{_head(repo)}")
+    ev = Evolution(repo=repo, clip="unused.mov", dry_run=False, population=3)
+
+    real_run = subprocess.run
+
+    def fake_run(cmd, *args, **kwargs):
+        if isinstance(cmd, list) and cmd[:2] == ["uv", "venv"]:
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=600)
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    rec = ev.run_generation(1)[0]
+    assert rec["gates"]["ok"] is False
+    assert rec["gates"]["reasons"] == ["worktree setup failed: worktree setup timed out"]
 
 
 def test_crossover_falls_back_to_ornate_when_one_survivor_is_an_ancestor(tmp_path):

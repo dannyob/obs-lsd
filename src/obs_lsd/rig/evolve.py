@@ -125,6 +125,13 @@ def agent_cost(path: Path) -> float:
         return 0.0
 
 
+def baseline_is_stale(repo: Path, baseline_sha: str) -> bool:
+    """True when HEAD has moved on since the baseline was captured. Children
+    fork from the baseline sha, so a stale baseline silently evolves old code."""
+    head = _git(Path(repo), "rev-parse", "--short", "HEAD")
+    return not (head.startswith(baseline_sha) or baseline_sha.startswith(head))
+
+
 def scope_violations(repo: Path, parent_sha: str, child_sha: str) -> list[str]:
     """Paths the child touched that are not in ALLOWED_PATHS. Run against the
     main repo, not the child's worktree - the child controls its worktree."""
@@ -158,7 +165,7 @@ class Evolution:
                     "parent": None,
                     "generation": 0,
                     "operator": "baseline",
-                    "sha": self._baseline_sha(),
+                    "sha": self.baseline_sha(),
                     "gates": {"ok": True, "reasons": []},
                     "score": self.baseline["score"],
                     "metrics_summary": self.baseline["stats"],
@@ -170,7 +177,7 @@ class Evolution:
     def _sha(self, ref: str) -> str:
         return _git(self.repo, "rev-parse", "--short", ref)
 
-    def _baseline_sha(self) -> str:
+    def baseline_sha(self) -> str:
         """The baseline record's sha comes from runs/baseline.json's run_dir
         name (written by `obs-lsd-rig baseline` as "baseline-<sha>"), not
         HEAD - HEAD may have moved on since the baseline was captured."""
@@ -223,20 +230,30 @@ class Evolution:
         if models_src.exists() and not models_dst.exists() and not models_dst.is_symlink():
             os.symlink(models_src, models_dst)
         if not (wt / ".venv").exists():
-            r1 = subprocess.run(
-                ["uv", "venv", "-p", "3.12"], cwd=wt, capture_output=True, text=True, check=False
-            )
-            if r1.returncode != 0:
-                raise RuntimeError(f"uv venv failed: {(r1.stderr or r1.stdout)[-300:]}")
-            r2 = subprocess.run(
-                ["uv", "pip", "install", "-e", ".[dev]"],
-                cwd=wt,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if r2.returncode != 0:
-                raise RuntimeError(f"uv pip install failed: {(r2.stderr or r2.stdout)[-300:]}")
+            try:
+                r1 = subprocess.run(
+                    ["uv", "venv", "-p", "3.12"],
+                    cwd=wt,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=600,
+                )
+                if r1.returncode != 0:
+                    raise RuntimeError(f"uv venv failed: {(r1.stderr or r1.stdout)[-300:]}")
+                r2 = subprocess.run(
+                    ["uv", "pip", "install", "-e", ".[dev]"],
+                    cwd=wt,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=600,
+                )
+                if r2.returncode != 0:
+                    raise RuntimeError(f"uv pip install failed: {(r2.stderr or r2.stdout)[-300:]}")
+            except subprocess.TimeoutExpired:
+                # a stalled index fetch at 2am must not hang the whole run
+                raise RuntimeError("worktree setup timed out") from None
 
     def _techniques(self, wt: Path) -> str:
         p = wt / "techniques.md"
@@ -291,6 +308,9 @@ class Evolution:
 
     def run_generation(self, gen: int) -> list[dict]:
         survivors = select_survivors(self.ledger.records(), self.population)
+        if not survivors:
+            self._say("no survivors to evolve from")
+            return []
         results = []
         for child in child_plan(gen, survivors):
             parent = self.ledger.by_id(child["parent"])
