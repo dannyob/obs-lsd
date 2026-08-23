@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import click
 
 
@@ -11,9 +13,17 @@ def rig():
 
 
 @rig.command()
-def render():
+@click.argument("clip", type=click.Path(exists=True))
+@click.option("--out", "out_dir", required=True, type=click.Path())
+@click.option("--width", default=1280, show_default=True)
+@click.option("--height", default=720, show_default=True)
+def render(clip, out_dir, width, height):
     """Replay a clip and write a run directory."""
-    raise click.ClickException("not implemented yet")
+    from obs_lsd.pipeline import PipelineConfig
+    from obs_lsd.rig.render import render as _render
+
+    res = _render(clip, Path(out_dir), cfg=PipelineConfig(width=width, height=height))
+    click.echo(f"{res.run_dir}: {res.n_frames} frames, ms/frame {res.stats['ms_total_mean']:.1f}")
 
 
 @rig.command()

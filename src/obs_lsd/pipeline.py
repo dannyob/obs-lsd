@@ -39,6 +39,8 @@ class Pipeline:
         self.timings: dict[str, float] = {}
         self._last_head = None
         self._lost_since: float | None = None
+        self.last_box = None
+        self.last_mask_out: np.ndarray | None = None
 
     def float_offset(self, t: float) -> tuple[float, float]:
         """Slow Lissajous drift so the head seems to float rather than sit pinned."""
@@ -65,6 +67,7 @@ class Pipeline:
             self._lost_since = t if self._lost_since is None else self._lost_since
             gain = max(0.0, 1.0 - (t - self._lost_since) / max(self.cfg.fade_seconds, 1e-6))
         tr = self.tracker.update(head.box if head is not None else None)
+        self.last_box = head.box if head is not None else None
         dx, dy = self.float_offset(t)
         tr = Transform(tr.scale, tr.tx + dx, tr.ty + dy)
 
@@ -77,6 +80,7 @@ class Pipeline:
             return np.zeros((self.cfg.height, self.cfg.width, 3), np.uint8)
         src_mask = self._last_head.mask
         m = cv2.warpAffine(src_mask, tr.matrix(), size, flags=cv2.INTER_LINEAR, borderValue=0)
+        self.last_mask_out = m
         f = cv2.warpAffine(frame_bgr, tr.matrix(), size, flags=cv2.INTER_LINEAR, borderValue=0)
         tm["warp"] = (time.perf_counter() - t1) * 1000
 

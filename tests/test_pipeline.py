@@ -106,3 +106,11 @@ def test_float_drifts_head_slowly_around_centre():
     assert abs((cx(b) - cx(a)) - expected_dx) < 3.0
     assert drift.float_offset(t)[0] == pytest.approx(expected_dx, abs=1e-6)
     assert still.float_offset(t) == (0.0, 0.0)
+
+
+def test_step_exposes_last_box_and_mask():
+    cfg = PipelineConfig(width=320, height=180, halo=HaloParams(spill_gain=0.0))
+    p = Pipeline(cfg, segmenter=FakeSeg())
+    assert p.last_box is None and p.last_mask_out is None
+    p.step(np.zeros((240, 320, 3), np.uint8), 0.0)
+    assert p.last_box.height == 80 and p.last_mask_out.shape == (180, 320)
