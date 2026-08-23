@@ -63,3 +63,21 @@ class Preview:
 
     def close(self) -> None:
         cv2.destroyWindow(self.title)
+
+
+class VideoFileSink:
+    """Write composed frames to an mp4 (for headless replay/evaluation runs)."""
+
+    def __init__(self, path: str, width: int, height: int, fps: float):
+        self.path = path
+        self._w = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+        if not self._w.isOpened():
+            raise RuntimeError(f"Could not open {path} for writing")
+        self.frames = 0
+
+    def write(self, frame_bgr: np.ndarray) -> None:
+        self._w.write(frame_bgr)
+        self.frames += 1
+
+    def close(self) -> None:
+        self._w.release()

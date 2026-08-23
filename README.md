@@ -36,6 +36,9 @@ camera and a preview window. Options:
   input runs out.
 - `--dump-frame PATH` -- write the last rendered frame to PATH as a PNG on
   exit.
+- `--output PATH` -- write every composed frame to an mp4. With `--input
+  clip.mov --no-vcam --no-preview` this replays a recorded clip flat out on
+  the file's own clock, so the same clip gives the same video every time.
 - `--stats` -- print per-stage timings (segment/warp/halo/compose/total, in
   ms) to stderr once a second.
 - `--halo-reach`, `--halo-density`, `--halo-speed`, `--halo-flicker`,

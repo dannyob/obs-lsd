@@ -56,8 +56,13 @@ IMAGE_EXT = {".png", ".jpg", ".jpeg", ".bmp"}
 
 
 class FrameSource:
-    def __init__(self, spec: str | None, width: int, height: int, fps: float):
+    def __init__(
+        self, spec: str | None, width: int, height: int, fps: float, realtime: bool = True
+    ):
         self.fps = fps
+        self.realtime = realtime
+        self.is_file = False
+        self.file_fps: float | None = None
         self._still: np.ndarray | None = None
         self._cap: cv2.VideoCapture | None = None
         target = resolve_camera(spec)
@@ -65,30 +70,49 @@ class FrameSource:
             self._still = cv2.imread(target)
             if self._still is None:
                 raise CameraError(f"Could not read image {target}")
+            self.is_file = True
         else:
             self._cap = cv2.VideoCapture(target)
             if isinstance(target, int):
                 self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
                 self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
                 self._cap.set(cv2.CAP_PROP_FPS, fps)
+            else:
+                self.is_file = True
+                f = self._cap.get(cv2.CAP_PROP_FPS)
+                self.file_fps = f if f and f > 0 else fps
             if not self._cap.isOpened():
+                what = "file" if self.is_file else "camera"
                 raise CameraError(
-                    f"Could not open camera {target!r}. Available: {list_cameras()}. "
+                    f"Could not open {what} {target!r}. Available cameras: {list_cameras()}. "
                     "On macOS check System Settings > Privacy & Security > Camera."
                 )
         self._t0 = time.monotonic()
 
     def __iter__(self) -> Iterator[tuple[np.ndarray, float]]:
-        period = 1.0 / self.fps if self.fps > 0 else 0.0
+        """Yield (bgr frame, t). For files t is the file's own clock (frame
+        index / fps) so a replay is deterministic; for cameras it is wall
+        clock. With realtime=True file playback is paced to its fps."""
+        if not self.is_file:
+            while True:
+                ok, frame = self._cap.read()
+                if not ok:
+                    return
+                yield frame, time.monotonic() - self._t0
+        period = 1.0 / (self.file_fps or self.fps)
+        idx = 0
         while True:
             if self._still is not None:
                 frame = self._still.copy()
-                time.sleep(period)
             else:
                 ok, frame = self._cap.read()
                 if not ok:
                     return
-            yield frame, time.monotonic() - self._t0
+            t = idx * period
+            if self.realtime:
+                time.sleep(max(0.0, self._t0 + t - time.monotonic()))
+            yield frame, t
+            idx += 1
 
     def close(self) -> None:
         if self._cap is not None:

@@ -34,6 +34,9 @@ from obs_lsd.pipeline import Pipeline, PipelineConfig
 @click.option("--no-preview", is_flag=True, help="No preview window")
 @click.option("--seconds", default=None, type=float, help="Stop after N seconds")
 @click.option("--dump-frame", default=None, type=click.Path(), help="Write the last frame as PNG")
+@click.option(
+    "--output", "output_path", default=None, type=click.Path(), help="Write every frame to an mp4"
+)
 @click.option("--stats", is_flag=True, help="Print per-stage timings once a second")
 @click.option("--halo-reach", default=HaloParams.reach, show_default=True)
 @click.option("--halo-density", default=HaloParams.density, show_default=True)
@@ -63,6 +66,7 @@ def cli(
     no_preview,
     seconds,
     dump_frame,
+    output_path,
     stats,
     halo_reach,
     halo_density,
@@ -92,17 +96,35 @@ def cli(
         width=width, height=height, head_frac=head_frac, halo=halo, float_amp=float_amp
     )
     code = run(
-        cfg, input_ if input_ else camera, fps, no_vcam, no_preview, seconds, dump_frame, stats
+        cfg,
+        input_ if input_ else camera,
+        fps,
+        no_vcam,
+        no_preview,
+        seconds,
+        dump_frame,
+        stats,
+        output_path=output_path,
     )
     if code:
         raise SystemExit(code)
 
 
 def run(
-    cfg: PipelineConfig, source_spec, fps, no_vcam, no_preview, seconds, dump_frame, stats
+    cfg: PipelineConfig,
+    source_spec,
+    fps,
+    no_vcam,
+    no_preview,
+    seconds,
+    dump_frame,
+    stats,
+    output_path: str | None = None,
 ) -> int:
+    # a headless replay (no preview, no vcam) runs flat out; anything live is paced
+    realtime = not (no_vcam and no_preview)
     try:
-        src = FrameSource(source_spec, cfg.width, cfg.height, fps)
+        src = FrameSource(source_spec, cfg.width, cfg.height, fps, realtime=realtime)
     except CameraError as e:
         click.echo(f"error: {e}", err=True)
         return 1
@@ -112,8 +134,12 @@ def run(
         click.echo(f"error: {e}", err=True)
         src.close()
         return 1
-    vcam = preview = None
+    vcam = preview = sink = None
     try:
+        if output_path:
+            from obs_lsd.output import VideoFileSink
+
+            sink = VideoFileSink(output_path, cfg.width, cfg.height, src.file_fps or fps)
         if not no_vcam:
             from obs_lsd.output import VirtualCam, VirtualCamMissing
 
@@ -135,6 +161,8 @@ def run(
                 last = out
                 if vcam:
                     vcam.send(out)
+                if sink:
+                    sink.write(out)
                 if preview:
                     action = preview.show(out)
                     if action == "quit":
@@ -160,6 +188,8 @@ def run(
         cleanups = []
         if preview:
             cleanups.append(preview.close)
+        if sink:
+            cleanups.append(sink.close)
         if vcam:
             cleanups.append(functools.partial(vcam.__exit__, None, None, None))
         cleanups += [pipe.close, src.close]

@@ -146,3 +146,58 @@ def test_failing_cleanup_still_releases_the_camera(still_png, tmp_path, monkeypa
     r = CliRunner().invoke(cli, _headless_args(still_png, tmp_path / "out.png"))
     assert r.exit_code == 0, r.output
     assert closed == [True], "src.close() skipped when an earlier cleanup raised"
+
+
+def test_video_input_to_video_output(tmp_path, monkeypatch):
+    import obs_lsd.cli as climod
+
+    class FakePipeline:
+        timings = {"total": 1.0}
+        frozen = False
+
+        def __init__(self, cfg, segmenter=None):
+            self.cfg = cfg
+            self.n = 0
+
+        def step(self, frame, t):
+            self.n += 1
+            out = np.zeros((self.cfg.height, self.cfg.width, 3), np.uint8)
+            out[:, :, 1] = min(255, self.n * 10)
+            return out
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(climod, "Pipeline", FakePipeline)
+    clip = tmp_path / "in.mp4"
+    w = cv2.VideoWriter(str(clip), cv2.VideoWriter_fourcc(*"mp4v"), 10.0, (64, 48))
+    for _ in range(12):
+        w.write(np.zeros((48, 64, 3), np.uint8))
+    w.release()
+    out = tmp_path / "out.mp4"
+    r = CliRunner().invoke(
+        cli,
+        [
+            "--input",
+            str(clip),
+            "--output",
+            str(out),
+            "--no-vcam",
+            "--no-preview",
+            "--width",
+            "64",
+            "--height",
+            "48",
+        ],
+    )
+    assert r.exit_code == 0, r.output
+    cap = cv2.VideoCapture(str(out))
+    n = 0
+    while True:
+        ok, f = cap.read()
+        if not ok:
+            break
+        n += 1
+        assert f.shape == (48, 64, 3)
+    assert n == 12
+    assert abs(cap.get(cv2.CAP_PROP_FPS) - 10.0) < 0.1  # output fps follows the input file
