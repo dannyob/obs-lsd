@@ -119,7 +119,7 @@ class Evolution:
                     "parent": None,
                     "generation": 0,
                     "operator": "baseline",
-                    "sha": self._sha("HEAD"),
+                    "sha": self._baseline_sha(),
                     "gates": {"ok": True, "reasons": []},
                     "score": self.baseline["score"],
                     "metrics_summary": self.baseline["stats"],
@@ -131,18 +131,48 @@ class Evolution:
     def _sha(self, ref: str) -> str:
         return _git(self.repo, "rev-parse", "--short", ref)
 
+    def _baseline_sha(self) -> str:
+        """The baseline record's sha comes from runs/baseline.json's run_dir
+        name (written by `obs-lsd-rig baseline` as "baseline-<sha>"), not
+        HEAD - HEAD may have moved on since the baseline was captured."""
+        name = Path(self.baseline.get("run_dir", "")).name
+        m = re.match(r"^baseline-([0-9a-fA-F]+)$", name)
+        if m:
+            return m.group(1)
+        self._say(f"warning: could not derive baseline sha from run_dir {name!r}; using HEAD")
+        return self._sha("HEAD")
+
     def _say(self, msg: str) -> None:
         self.log.append(msg)
         print(msg, flush=True)
 
-    def _worktree(self, branch: str, base_sha: str) -> Path:
-        wt = self.repo / ".worktrees" / branch.replace("/", "-")
+    def _branch_exists(self, branch: str) -> bool:
+        r = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", branch],
+            cwd=self.repo,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return r.returncode == 0
+
+    def _worktree(self, branch: str, base_sha: str) -> tuple[Path, str]:
+        """Create (or re-create) a worktree for `branch` off `base_sha`. If
+        `branch` already exists and points somewhere other than `base_sha`
+        (a prior run's work), don't clobber it - suffix with -rN and use
+        that branch instead, so re-running a generation never loses work."""
+        final_branch = branch
+        if self._branch_exists(branch) and self._sha(branch) != base_sha:
+            n = 1
+            while self._branch_exists(f"{branch}-r{n}"):
+                n += 1
+            final_branch = f"{branch}-r{n}"
+        wt = self.repo / ".worktrees" / final_branch.replace("/", "-")
         if wt.exists():
             shutil.rmtree(wt)
             subprocess.run(["git", "worktree", "prune"], cwd=self.repo, check=False)
-        _git(self.repo, "worktree", "add", "-q", "-B", branch, str(wt), base_sha)
-        self._prepare_worktree(wt)
-        return wt
+        _git(self.repo, "worktree", "add", "-q", "-B", final_branch, str(wt), base_sha)
+        return wt, final_branch
 
     def _prepare_worktree(self, wt: Path) -> None:
         """Give the worktree its own venv and a symlink to the shared models,
@@ -154,8 +184,20 @@ class Evolution:
         if models_src.exists() and not models_dst.exists() and not models_dst.is_symlink():
             os.symlink(models_src, models_dst)
         if not (wt / ".venv").exists():
-            subprocess.run(["uv", "venv", "-p", "3.12"], cwd=wt, check=False)
-            subprocess.run(["uv", "pip", "install", "-e", ".[dev]"], cwd=wt, check=False)
+            r1 = subprocess.run(
+                ["uv", "venv", "-p", "3.12"], cwd=wt, capture_output=True, text=True, check=False
+            )
+            if r1.returncode != 0:
+                raise RuntimeError(f"uv venv failed: {(r1.stderr or r1.stdout)[-300:]}")
+            r2 = subprocess.run(
+                ["uv", "pip", "install", "-e", ".[dev]"],
+                cwd=wt,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if r2.returncode != 0:
+                raise RuntimeError(f"uv pip install failed: {(r2.stderr or r2.stdout)[-300:]}")
 
     def _techniques(self, wt: Path) -> str:
         p = wt / "techniques.md"
@@ -202,9 +244,12 @@ class Evolution:
                 "cost_usd": 0.0,
                 "agent": None,
             }
-            stage = "worktree"
+            stage = "worktree setup"
             try:
-                wt = self._worktree(branch, parent["sha"])
+                wt, branch = self._worktree(branch, parent["sha"])
+                rec["branch"] = branch
+                rec["id"] = branch.replace("/", "-")
+                self._prepare_worktree(wt)
 
                 operator = child["operator"]
                 extra = ""

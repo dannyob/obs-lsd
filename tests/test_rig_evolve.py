@@ -121,13 +121,20 @@ def test_dry_run_generation_creates_branches_and_ledger(tmp_path):
 
 def test_run_generation_survives_judge_failure(tmp_path, monkeypatch):
     repo = _repo(tmp_path)
+    head = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
     runs = repo / "runs"
     runs.mkdir()
     base_stats = {"ms_total_mean": 30.0, "no_head_frac": 0.0, "jump_count": 2}
     (runs / "baseline.json").write_text(
         json.dumps(
             {
-                "run_dir": "runs/baseline-abc1234",
+                "run_dir": f"runs/baseline-{head}",
                 "stats": base_stats,
                 "score": {
                     "seamless": 10,
@@ -174,3 +181,153 @@ def test_run_generation_survives_judge_failure(tmp_path, monkeypatch):
     assert rec["gates"]["reasons"][0].startswith("judge failed")
     ledger = json.loads((runs / "ledger.json").read_text())
     assert ledger[-1]["id"] == rec["id"]
+
+
+def test_baseline_sha_derived_from_run_dir(tmp_path):
+    repo = _repo(tmp_path)
+    runs = repo / "runs"
+    runs.mkdir()
+    (runs / "baseline.json").write_text(
+        json.dumps(
+            {
+                "run_dir": "runs/baseline-abc1234",
+                "stats": {"ms_total_mean": 1.0, "no_head_frac": 0.0, "jump_count": 0},
+                "score": {
+                    "seamless": 1,
+                    "distracting": 1,
+                    "ornate": 1,
+                    "total": 3,
+                    "notes": "",
+                    "top_fix": "",
+                },
+            }
+        )
+    )
+    ev = Evolution(repo=repo, clip="unused.mov", dry_run=True, population=3)
+    assert ev.ledger.by_id("baseline")["sha"] == "abc1234"
+
+
+def test_baseline_sha_falls_back_to_head_when_run_dir_unrecognised(tmp_path):
+    repo = _repo(tmp_path)
+    runs = repo / "runs"
+    runs.mkdir()
+    (runs / "baseline.json").write_text(
+        json.dumps(
+            {
+                "run_dir": "runs/b",
+                "stats": {"ms_total_mean": 1.0, "no_head_frac": 0.0, "jump_count": 0},
+                "score": {
+                    "seamless": 1,
+                    "distracting": 1,
+                    "ornate": 1,
+                    "total": 3,
+                    "notes": "",
+                    "top_fix": "",
+                },
+            }
+        )
+    )
+    ev = Evolution(repo=repo, clip="unused.mov", dry_run=True, population=3)
+    head = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert ev.ledger.by_id("baseline")["sha"] == head
+
+
+def test_worktree_rerun_suffixes_branch_and_leaves_original(tmp_path):
+    repo = _repo(tmp_path)
+    base_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    subprocess.run(["git", "branch", "evo/g1-0"], cwd=repo, check=True)
+    subprocess.run(["git", "checkout", "-q", "evo/g1-0"], cwd=repo, check=True)
+    (repo / "extra.txt").write_text("x\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "advance"],
+        cwd=repo,
+        check=True,
+    )
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=repo, check=True)
+    tip_before = subprocess.run(
+        ["git", "rev-parse", "evo/g1-0"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+    runs = repo / "runs"
+    runs.mkdir()
+    (runs / "baseline.json").write_text(
+        json.dumps(
+            {
+                "run_dir": "runs/baseline-deadbee",
+                "stats": {"ms_total_mean": 1.0, "no_head_frac": 0.0, "jump_count": 0},
+                "score": {
+                    "seamless": 1,
+                    "distracting": 1,
+                    "ornate": 1,
+                    "total": 3,
+                    "notes": "",
+                    "top_fix": "",
+                },
+            }
+        )
+    )
+    ev = Evolution(repo=repo, clip="unused.mov", dry_run=True, population=3)
+    wt, branch = ev._worktree("evo/g1-0", base_sha)
+    assert branch == "evo/g1-0-r1"
+    assert wt == repo / ".worktrees" / "evo-g1-0-r1"
+    assert wt.exists()
+    tip_after = subprocess.run(
+        ["git", "rev-parse", "evo/g1-0"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    assert tip_after == tip_before
+
+
+def test_prepare_worktree_failure_is_ledgered(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    head = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    runs = repo / "runs"
+    runs.mkdir()
+    base_stats = {"ms_total_mean": 30.0, "no_head_frac": 0.0, "jump_count": 2}
+    (runs / "baseline.json").write_text(
+        json.dumps(
+            {
+                "run_dir": f"runs/baseline-{head}",
+                "stats": base_stats,
+                "score": {
+                    "seamless": 10,
+                    "distracting": 10,
+                    "ornate": 10,
+                    "total": 30,
+                    "notes": "n",
+                    "top_fix": "t",
+                },
+            }
+        )
+    )
+    ev = Evolution(repo=repo, clip="unused.mov", dry_run=False, population=3)
+
+    real_run = subprocess.run
+
+    def fake_run(cmd, *args, **kwargs):
+        if isinstance(cmd, list) and cmd[:2] == ["uv", "venv"]:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="boom: no python")
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    recs = ev.run_generation(1)
+    assert len(recs) == 1
+    rec = recs[0]
+    assert rec["gates"]["ok"] is False
+    assert rec["gates"]["reasons"][0].startswith("worktree setup failed")
+    assert "boom" in rec["gates"]["reasons"][0]
