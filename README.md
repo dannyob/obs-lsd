@@ -1,153 +1,127 @@
 # obs-lsd
 
-obs-lsd reads your webcam, cuts out your head at the neck, centers it on a
-black background at a steady size, surrounds it with an animated rainbow
-halo, and publishes the result as a virtual camera. Point Zoom (or OBS, as a
-Video Capture Device source) at it instead of your real camera.
+obs-lsd cuts your head out of your webcam feed at the neck, floats it on a
+black background inside an animated psychedelic halo, and publishes that as
+a virtual camera for Zoom or OBS.
 
-Requires Python 3.12 and macOS. Run `make install-dev models && make run` to
-set up the environment, fetch the MediaPipe models, and start a live preview
-with the virtual camera. OBS's virtual camera system extension provides the
-video device this tool publishes to — install OBS and, once, launch it and
-click Start Virtual Camera so macOS registers the device. macOS will also
-prompt for camera access the first time obs-lsd runs; grant it in System
-Settings > Privacy & Security > Camera.
+![A head floating in a slowly turning rainbow halo](docs/demo.gif)
 
-## Usage
+macOS on Apple Silicon (Intel untested), Python 3.12. Runs on the CPU,
+around 40ms a frame on an M5 Max, most of it MediaPipe's segmenter:
 
-`obs-lsd` opens a camera (or a file given with `--input`), runs it through
-the segment/track/halo pipeline, and sends the result to the OBS virtual
-camera and a preview window. Options:
+```
+$ obs-lsd --input tests/data/portrait.jpg --seconds 3 --no-vcam --no-preview --stats
+segment=27.0ms warp=0.3ms halo=8.6ms compose=4.6ms total=40.5ms
+```
 
-- `--camera TEXT` -- camera index or a substring of its name (default: 0,
-  the first camera). Run with `--list-cameras` to see what's connected and
-  exit.
-- `--input PATH` -- read from a video or still-image file instead of a
-  camera. A still is looped at `--fps`.
-- `--width`, `--height`, `--fps` -- output frame size and rate (default
-  1280x720 at 30fps).
-- `--float` -- drift amplitude as a fraction of frame height (0 disables)
-- `--head-frac` -- target head height as a fraction of frame height
-  (default 0.55).
-- `--no-vcam` -- skip opening the OBS virtual camera; useful when you only
-  want the preview or a `--dump-frame`.
-- `--no-preview` -- run without the preview window, for headless use.
-- `--seconds N` -- stop after N seconds instead of running until quit or the
-  input runs out.
-- `--dump-frame PATH` -- write the last rendered frame to PATH as a PNG on
-  exit.
-- `--output PATH` -- write every composed frame to an mp4. With `--input
-  clip.mov --no-vcam --no-preview` this replays a recorded clip flat out on
-  the file's own clock, so the same clip gives the same video every time.
-- `--stats` -- print per-stage timings (segment/warp/halo/compose/total, in
-  ms) to stderr once a second.
-- `--halo-reach`, `--halo-density`, `--halo-speed`, `--halo-flicker`,
-  `--halo-hue-speed`, `--halo-spill`, `--halo-scale` -- tune the halo; see `HaloParams` in
-  `src/obs_lsd/halo.py` for what each does and its default.
+## Install
 
-If Zoom lists "OBS Virtual Camera" but shows only black, check that OBS
-itself is not running: only one program can feed the virtual camera at a
-time, and an open OBS (with its Virtual Camera started) wins, sending its
-own — usually empty — scene. Quit OBS, restart `obs-lsd`, and re-select the
-camera in Zoom.
+```sh
+git clone https://github.com/dannyob/obs-lsd.git
+cd obs-lsd
+make install-dev models
+```
 
-With the preview window focused, these keys work live:
+That makes a `.venv` with [uv](https://docs.astral.sh/uv/), installs the
+package into it, and downloads two MediaPipe models (about 20MB).
 
-- `q` or Esc -- quit
-- `]` / `[` -- grow / shrink the target head size
-- `=` / `-` -- speed up / slow down the hue cycle
-- `.` / `,` -- increase / decrease halo reach
-- `s` -- freeze/unfreeze the head cutout (halo keeps animating)
-- `p` -- print the current head-size fraction and halo params to stderr
+The virtual camera device itself comes from OBS. Install
+[OBS Studio](https://obsproject.com/), launch it once, and click Start
+Virtual Camera so macOS registers the system extension. After that you can
+quit OBS for good; obs-lsd only needs the device it left behind.
 
-`make smoke` runs the pipeline headless against `tests/data/portrait.jpg`
-and writes `/tmp/obs-lsd-smoke.png`, so you can check the segmenter and halo
-are working without a camera or a preview window.
+## Quickstart
+
+```sh
+make run
+```
+
+A preview window opens, macOS asks for camera access, and "OBS Virtual
+Camera" appears in Zoom's camera list. Pick it. obs-lsd reads the first
+camera macOS lists; `--camera` picks another. With the preview window focused:
+
+| key | does |
+|-----|------|
+| `q` or Esc | quit |
+| `]` / `[` | grow / shrink the head |
+| `.` / `,` | longer / shorter rays |
+| `=` / `-` | faster / slower hue cycle |
+| `s` | freeze the head cutout (the halo keeps moving) |
+| `p` | print the current head size and halo settings to stderr |
+
+The preview window is only there for the keys; `--no-preview` drops it and
+the virtual camera carries on.
+
+If Zoom shows the camera but only black, OBS is still running. Only one
+program can feed the virtual camera, and OBS wins with its own, usually
+empty, scene. Quit OBS, restart obs-lsd, re-select the camera in Zoom.
+
+When the segmenter loses your face (you turn away, walk off, the light
+goes), the last cutout is held, fades to black over a second, and comes
+back when you do. The cutout is hair plus face skin, so a hat is not part
+of it, and it tracks one face at a time.
+
+No camera handy? `make smoke` runs the whole pipeline on a still portrait
+and writes `/tmp/obs-lsd-smoke.png`.
+
+## Options
+
+`obs-lsd --help` lists everything. The ones you are likely to want:
+
+- `--camera 1` or `--camera "Studio"` picks a camera by index or name
+  substring; `--list-cameras` shows what is connected.
+- `--input clip.mov` reads a video or still instead of a camera. With
+  `--output out.mp4 --no-vcam --no-preview` it renders as fast as it can,
+  timing the halo by the file's timestamps, so the same clip gives the
+  same video every time.
+- `--head-frac 0.55` sets how tall the head is as a fraction of the frame,
+  and `--float 0.03` how far it drifts about the centre (0 to pin it).
+- `--halo-reach`, `--halo-density`, `--halo-speed`, `--halo-rotate`,
+  `--halo-flicker`, `--halo-hue-speed`, `--halo-spill`, `--halo-scale` tune
+  the halo. Defaults and what each one does are on `HaloParams` in
+  `src/obs_lsd/halo.py`.
+- `--width`, `--height`, `--fps` set the output format (default 1280x720
+  at 30). `--seconds N` stops after N seconds; `--dump-frame x.png` saves
+  the last frame on exit.
 
 ## Evaluation rig
 
-`obs-lsd-rig` scores how the halo actually looks and can mutate the code
-that draws it. It needs a recorded clip of a face to work from: open
-QuickTime Player, File > New Movie Recording, pick your camera, record 20-30
-seconds moving your head around under normal lighting, and save it under
-`clips/` (`clips/danny-01.mov`, say). The directory is gitignored; it's
-local test data.
+A second command, `obs-lsd-rig`, answers "does the halo look better after
+that change?" It replays a short clip of your face through the pipeline
+and has a vision model (via OpenRouter, billed to your key) score the
+result against the rubric in `loop.md`: three criteria, 30 points each,
+90 total. It can also run an evolutionary loop in which Claude Code
+agents each try one halo tweak on a throwaway branch and the
+highest-scoring survive. Record 20-30 seconds of yourself with QuickTime
+into `clips/`, run `pass insert openrouter/api-key`, then:
 
-`make baseline CLIP=clips/danny-01.mov` renders that clip through `main`,
-scores the result with an LLM judge, and writes `runs/baseline.json`. Every
-later generation is compared against this. `make eval CLIP=clips/x.mov`
-does the same render-then-judge pass against whatever is currently checked
-out, without touching the baseline. It's useful for scoring a branch by
-hand before committing to a full evolution run.
+```sh
+make baseline CLIP=clips/me-01.mov   # score main
+make eval CLIP=clips/me-01.mov       # score whatever is checked out
+make evolve CLIP=clips/me-01.mov GENS=3
+```
 
-`make evolve CLIP=clips/danny-01.mov GENS=N` runs the actual loop: each
-generation spins up one or more `evo/gN-k` branches in their own worktrees
-under `.worktrees/`, child k seeded from survivor k of the last generation.
-Inside each worktree a `claude -p --dangerously-skip-permissions` agent
-reads a brief (parent score, judge notes, the running `techniques.md` log)
-and edits the halo/compose code to try one new idea, commits it, then the
-rig diffs that commit against its parent and throws the child away if it
-touched anything outside `ALLOWED_PATHS` in `evolve.py` (the halo/compose/
-segment/track/pipeline/cli modules, their tests, and `techniques.md`).
-Children that stayed in scope get their tests and lint run, the clip
-rendered with their own code, and the render checked against the gates:
-the head still found on as many frames as the baseline, ms/frame within
-15% of the parent and 1.5x of the baseline, and no more halo-delta jumps
-than twice the baseline's count (floor of 5). Whatever gates clean is
-judged. `--agent-budget` (default $5) is passed to each agent as
-`--max-budget-usd`.
+The loop costs money on both the judge and the agents, runs the agents
+with permission prompts off in worktrees that share this repo's `.git`,
+and pastes model-written notes into the next agent's prompt unfiltered.
+The driver never checks out `main`, and nothing lands there except a
+merge you type. It is a local single-user tool; don't point it at a clip
+or branch you don't trust. Costs, gates, the ledger, and `calibrate`
+(checking the judge against your own eye) are in [docs/rig.md](docs/rig.md).
 
-Children fork from the sha in `runs/baseline.json`, not from `HEAD`, so
-re-run `make baseline CLIP=…` after merging anything into `main` —
-otherwise every child forks from the old commit. `evolve` refuses to start
-when that sha is not `HEAD` unless you pass `--allow-stale-baseline`.
+## Development
 
-Confinement here is by convention plus that scope check, not by a sandbox.
-Each worktree lives inside the repo and shares its `.git`, the agent runs
-with `--dangerously-skip-permissions`, and it inherits your environment
-minus `OPENROUTER_API_KEY` — so it can in principle reach anything you
-can. What the code actually guarantees is narrower: the driver never
-checks out `main`, and a champion reaches `main` only through a `git
-merge` you type yourself. Three streams of model-written text also land
-verbatim in the next agent's brief — the judge's notes, `techniques.md`,
-and the sibling diffs pasted in for crossover — so the loop is a
-prompt-injection path by construction. That's acceptable for a local
-single-user tool; don't point it at a clip or a branch you don't trust.
+```sh
+make test     # pytest
+make lint     # ruff
+make smoke    # end-to-end on the still portrait
+```
 
-Every attempt, whether it gates clean or not, gets a record appended to
-`runs/ledger.json`: branch, parent, generation, operator, gate result and
-reasons, judge score (seamless/distracting/ornate/total plus notes and a
-top-fix suggestion), the render's metrics summary, and both costs (judge
-and agent). The render itself lands in `runs/<branch>-<sha>/`, with
-`sheet.png` (a timestamped grid of frames), `crops.png` (centre crops at
-25/50/75% of the clip), `motion.png`, the composited `out.mp4`,
-`metrics.json`, and `score.json`. The brief the agent was given and its
-`total_cost_usd` JSON land in `runs/agents/<branch>/`, outside the
-worktree so they can't be committed by accident.
+Tests are written first here; `make smoke` is the bar before a change
+counts as working. MediaPipe must stay below 1.0 on macOS; the 1.x
+releases crash. The design notes and implementation plans that produced
+the code are in `docs/superpowers/`.
 
-To promote a generation's winner into `main`, just merge its branch:
-`git merge evo/g3-1`. Nothing about the rig is special about that branch
-once you do — it's ordinary code, and the merge commit is the record of
-why it won.
+## License
 
-`obs-lsd-rig calibrate PAIRS_JSON [--models a,b,c]` checks whether the
-judge's pairwise picks agree with yours. Make `PAIRS_JSON` by hand: render
-two variants you want to compare (`make eval` on each, or two `render`
-calls), look at their `sheet.png`s, and write a JSON list of
-`{"a": run_dir, "b": run_dir, "human": "a"|"b"}` objects, one per pair you
-ranked yourself. `calibrate` then runs a pairwise A/B on each pair for
-every model in `--models` and prints, per model, how often its pick
-matched your `human` pick. Run it before trusting small score deltas
-between generations. Every rig command that calls the judge also takes
-`--judge-model` to swap the model for a single call (it defaults to a
-fixed OpenRouter model id in `judge.py`).
-
-The judge reads its OpenRouter key with `pass show openrouter/api-key`;
-set that up first (`pass insert openrouter/api-key`). There are two
-separate bills here. The judge is billed to the OpenRouter key: about
-$0.09 per call, and a score samples 3 calls by default, so about $0.30 to
-score one child. The coding agent's turns are `claude -p` and are billed
-to whatever authenticates `claude` on your machine (your Claude plan or an
-API key), not OpenRouter; that side runs a few dollars per child in
-practice. The generation table prints both, per child and cumulative, and
-`--agent-budget` caps the `claude -p` side.
+AGPL-3.0-or-later.
