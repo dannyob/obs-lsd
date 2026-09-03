@@ -124,4 +124,4 @@ the code are in `docs/superpowers/`.
 
 ## License
 
-AGPL-3.0-or-later.
+MIT.

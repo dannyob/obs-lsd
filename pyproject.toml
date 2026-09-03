@@ -3,7 +3,7 @@ name = "obs-lsd"
 version = "0.1.0"
 description = "Glowing psychedelic floating-head virtual camera for Zoom/OBS"
 requires-python = "==3.12.*"
-license = "AGPL-3.0-or-later"
+license = "MIT"
 authors = [{ name = "Danny O'Brien", email = "danny@spesh.com" }]
 dependencies = [
     "click>=8.0",
