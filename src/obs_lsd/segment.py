@@ -159,6 +159,7 @@ class HeadSegmenter:
         # The Metal delegate aborts the process (a CHECK failure, not an
         # exception) when handed an SRGB image; SRGBA works on both delegates.
         h, w = frame_bgr.shape[:2]
+        sw, sh = w, h
         if 0 < self.infer_width < w:
             sw = self.infer_width
             sh = max(1, round(h * sw / w))
@@ -169,22 +170,29 @@ class HeadSegmenter:
         if not fl.face_landmarks:
             return self._hold()
         lm = fl.face_landmarks[0]
-        chin = (lm[CHIN_LM].x * w, lm[CHIN_LM].y * h)
         le, re = lm[LEFT_EYE_LM], lm[RIGHT_EYE_LM]
         roll = math.degrees(math.atan2((re.y - le.y) * h, (re.x - le.x) * w))
         seg = self._seg.segment_for_video(img, self._ts)
         cm = seg.confidence_masks
         hair = cm[HAIR].numpy_view()[..., 0]
         face = cm[FACE].numpy_view()[..., 0]
-        if hair.shape != (h, w):
-            hair = cv2.resize(hair, (w, h), interpolation=cv2.INTER_LINEAR)
-            face = cv2.resize(face, (w, h), interpolation=cv2.INTER_LINEAR)
-        face_h = abs(chin[1] - min(le.y, re.y) * h) * 2.0
-        hp = chin_halfplane((h, w), chin, roll, self.chin_margin * face_h)
-        m = head_from_masks(hair, face, hp, self.feather)
-        box = mask_box(m)
+        # Union, chin cut and box at the inference size, where they are nearly
+        # free; one resize up, then the feather at camera size so its width
+        # in pixels does not depend on infer_width.
+        chin = (lm[CHIN_LM].x * sw, lm[CHIN_LM].y * sh)
+        face_h = abs(chin[1] - min(le.y, re.y) * sh) * 2.0
+        hp = chin_halfplane((sh, sw), chin, roll, self.chin_margin * face_h)
+        m = head_from_masks(hair, face, hp, feather=0)
+        scale = w / sw
+        box = mask_box(m, min_pixels=max(1, round(50 / (scale * scale))))
         if box is None:
             return self._hold()
+        if (sh, sw) != (h, w):
+            m = cv2.resize(m, (w, h), interpolation=cv2.INTER_LINEAR)
+            box = HeadBox(cx=box.cx * scale, cy=box.cy * scale, height=box.height * scale)
+        if self.feather > 0:
+            k = self.feather * 2 + 1
+            m = cv2.GaussianBlur(m, (k, k), 0)
         self._last = HeadMask(mask=m, box=box)
         self._missing = 0
         return self._last
