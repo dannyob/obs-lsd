@@ -17,3 +17,4 @@ means from the rig's `metrics.json`. Target 16.7ms (60 fps).
 | 7 | segmenter post-processing at inference size (worker 16 -> 10.6 ms/frame; bench loop unchanged) | 14.4 | 0.1 | 9.9 | 3.6 | 69.3 | yes |
 | 8 | halo: drop the three modulo passes; remap's BORDER_WRAP already tiles the texture | 12.8 | 0.1 | 7.9 | 4.0 | 78.0 | yes |
 | 9 | halo: HSV via one cv2.merge, inside zeroed on V only; output identical | 11.8 | 0.1 | 7.2 | 3.7 | 84.8 | yes |
+| 10 | halo on a second worker, one frame behind (`--halo-thread`, default on) | 4.9 | 0.1 | 0.0 (wait) | 4.0 | 202.9 | judging |

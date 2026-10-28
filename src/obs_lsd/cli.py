@@ -31,6 +31,13 @@ from obs_lsd.pipeline import Pipeline, PipelineConfig
     "--no-seg-thread segments inline with no lag",
 )
 @click.option(
+    "--halo-thread/--no-halo-thread",
+    default=True,
+    show_default=True,
+    help="Render the halo on a worker thread, one frame behind the loop (faster); "
+    "--no-halo-thread renders inline",
+)
+@click.option(
     "--float",
     "float_amp",
     default=0.03,
@@ -69,6 +76,7 @@ def cli(
     fps,
     head_frac,
     seg_thread,
+    halo_thread,
     float_amp,
     no_vcam,
     no_preview,
@@ -107,6 +115,7 @@ def cli(
         halo=halo,
         float_amp=float_amp,
         seg_lag=1 if seg_thread else 0,
+        halo_lag=1 if halo_thread else 0,
     )
     code = run(
         cfg,
