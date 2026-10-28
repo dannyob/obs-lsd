@@ -13,3 +13,4 @@ means from the rig's `metrics.json`. Target 16.7ms (60 fps).
 | 4 | halo: in-place cv2 ops, cached grids, moments for the centre, no final clip; output bit-identical | 38.2 | 18.3 | 9.7 | 9.6 | 26.1 | yes |
 | 5 | compose in uint8 via cv2.blendLinear; spill added in uint8 | 29.5 | 15.9 | 9.4 | 3.4 | 33.9 | yes |
 | 5b | shrink frame to 320 wide before inference, linear resize (round 2 again, without INTER_AREA) | (same bench) | 15.9 | | | | yes: segment 18.3 -> 15.9 |
+| 6 | segmenter on a worker thread, one frame behind the loop (`--seg-thread`, default on) | 14.9 | 0.1 (wait) | 10.1 | 3.9 | 67.0 | yes |

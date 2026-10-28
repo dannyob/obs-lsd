@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import cv2
@@ -19,6 +20,10 @@ class PipelineConfig:
     width: int = 1280
     height: int = 720
     head_frac: float = 0.55
+    # 1: segment on a worker thread and compose each frame with the previous
+    # frame's mask, so the frame loop overlaps MediaPipe instead of waiting on
+    # it. Costs one frame of latency. 0: segment inline, no lag.
+    seg_lag: int = 1
     halo: HaloParams = field(default_factory=HaloParams)
     fade_seconds: float = 1.0
     float_amp: float = 0.03  # gentle drift of the head about the centre, x frame height
@@ -41,6 +46,10 @@ class Pipeline:
         self._lost_since: float | None = None
         self.last_box = None
         self.last_mask_out: np.ndarray | None = None
+        self._pool = (
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="segment") if cfg.seg_lag else None
+        )
+        self._pending: Future | None = None
 
     def float_offset(self, t: float) -> tuple[float, float]:
         """Slow Lissajous drift so the head seems to float rather than sit pinned."""
@@ -55,8 +64,15 @@ class Pipeline:
         t0 = time.perf_counter()
         if self.frozen and self._last_head is not None:
             head = self._last_head
-        else:
+        elif self._pool is None:
             head = self.seg.mask(frame_bgr, int(t * 1000))
+        else:
+            # Hand this frame to the worker, then take the previous frame's
+            # result; the very first frame waits for its own so it is not black.
+            # The segmenter only ever runs on the worker thread.
+            prev = self._pending
+            self._pending = self._pool.submit(self.seg.mask, frame_bgr, int(t * 1000))
+            head = (prev or self._pending).result()
         tm["segment"] = (time.perf_counter() - t0) * 1000
 
         if head is not None:
@@ -105,4 +121,6 @@ class Pipeline:
         return out
 
     def close(self) -> None:
+        if self._pool is not None:
+            self._pool.shutdown(wait=True)
         self.seg.close()

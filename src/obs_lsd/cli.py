@@ -24,6 +24,13 @@ from obs_lsd.pipeline import Pipeline, PipelineConfig
     "--head-frac", default=0.55, show_default=True, help="Head height as fraction of frame"
 )
 @click.option(
+    "--seg-thread/--no-seg-thread",
+    default=True,
+    show_default=True,
+    help="Segment on a worker thread, one frame behind the loop (faster); "
+    "--no-seg-thread segments inline with no lag",
+)
+@click.option(
     "--float",
     "float_amp",
     default=0.03,
@@ -61,6 +68,7 @@ def cli(
     height,
     fps,
     head_frac,
+    seg_thread,
     float_amp,
     no_vcam,
     no_preview,
@@ -93,7 +101,12 @@ def cli(
         scale=halo_scale,
     )
     cfg = PipelineConfig(
-        width=width, height=height, head_frac=head_frac, halo=halo, float_amp=float_amp
+        width=width,
+        height=height,
+        head_frac=head_frac,
+        halo=halo,
+        float_amp=float_amp,
+        seg_lag=1 if seg_thread else 0,
     )
     code = run(
         cfg,
