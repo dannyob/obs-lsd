@@ -60,6 +60,15 @@ class HaloRenderer:
         self.tex = np.stack(
             [tileable_noise(self.TEX_H, self.TEX_W, seed=seed * 100 + i) for i in range(self.TEX_N)]
         )
+        self._grids: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = {}
+
+    def _grid(self, h: int, w: int) -> tuple[np.ndarray, np.ndarray]:
+        """Pixel x and y coordinates as float32, cached per render size."""
+        g = self._grids.get((h, w))
+        if g is None:
+            yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+            g = self._grids[(h, w)] = (xx, yy)
+        return g
 
     def render(self, mask: np.ndarray, t: float) -> np.ndarray:
         H, W = mask.shape
@@ -69,63 +78,79 @@ class HaloRenderer:
         if m.max() <= 0.0:
             return np.zeros((H, W, 3), np.float32)
         binary = (m > 0.5).astype(np.uint8)
-        ys, xs = np.nonzero(binary)
-        if xs.size == 0:
+        mom = cv2.moments(binary, binaryImage=True)
+        if mom["m00"] == 0:
             # mask survived the m.max() check but vanished under downscale +
             # 0.5 threshold (e.g. a single full-res pixel) -- nothing to draw
             return np.zeros((H, W, 3), np.float32)
+        cx, cy = mom["m10"] / mom["m00"], mom["m01"] / mom["m00"]
+        outside = 1 - binary
         # distance (in full-res px) from the head contour, outward
-        dist = cv2.distanceTransform(1 - binary, cv2.DIST_L2, 3).astype(np.float32) / s
-        cx, cy = np.float32(xs.mean()), np.float32(ys.mean())
-        yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+        dist = cv2.distanceTransform(outside, cv2.DIST_L2, 3)
+        dist *= np.float32(1.0 / s)
+        xx, yy = self._grid(h, w)
         theta = np.arctan2(yy - cy, xx - cx)  # -pi..pi
+        # Everything below is a full half-res float32 pass; each is written in
+        # place or through cv2, which is 3-5x faster than numpy's temporaries.
+        two_pi = 2.0 * np.pi
+        theta_n = theta * np.float32(1.0 / two_pi)  # one temporary, reused below
+        theta_n += np.float32(t * self.p.rotate + 0.5)
         # Texture lookup: angle wraps around TEX_W, radius scrolls with time.
         # The coarsest noise octave has 8 cells across TEX_W, so scaling the
         # angle by density/8 makes `density` the number of rays around the head.
-        theta_n = (theta + 2 * np.pi * t * self.p.rotate) / (2 * np.pi) + 0.5
-        map_x = (theta_n * (self.p.density / 8.0) * self.TEX_W) % self.TEX_W
-        map_y = (
-            (dist * (self.TEX_H / self.p.reach)) - t * self.p.speed * (self.TEX_H / self.p.reach)
-        ) % self.TEX_H
+        map_x = theta_n * np.float32((self.p.density / 8.0) * self.TEX_W)
+        np.mod(map_x, self.TEX_W, out=map_x)
+        ky = self.TEX_H / self.p.reach
+        map_y = dist * np.float32(ky)
+        map_y -= np.float32(t * self.p.speed * ky)
+        np.mod(map_y, self.TEX_H, out=map_y)
         f = t * self.p.flicker * self.TEX_N
         i0 = int(f) % self.TEX_N
         i1 = (i0 + 1) % self.TEX_N
-        frac = np.float32(f - int(f))
-        n0 = cv2.remap(self.tex[i0], map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_WRAP)
-        n1 = cv2.remap(self.tex[i1], map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_WRAP)
-        n = n0 * (1 - frac) + n1 * frac
+        frac = float(f - int(f))
+        wrap = cv2.BORDER_WRAP
+        n0 = cv2.remap(self.tex[i0], map_x, map_y, cv2.INTER_LINEAR, borderMode=wrap)
+        n1 = cv2.remap(self.tex[i1], map_x, map_y, cv2.INTER_LINEAR, borderMode=wrap)
+        n = cv2.addWeighted(n0, 1.0 - frac, n1, frac, 0.0)
         # angular fine detail: a second, slow lookup that modulates ray brightness
         # around the circle; fixed rate so it does not fight `density`. Cross-faded
         # between slices like `n`, otherwise it snaps to a new texture every tick.
-        map_x_fine = (theta_n * 3.0 * self.TEX_W) % self.TEX_W
+        map_x_fine = theta_n * np.float32(3.0 * self.TEX_W)
+        np.mod(map_x_fine, self.TEX_W, out=map_x_fine)
         f0 = cv2.remap(
-            self.tex[(i0 + 3) % self.TEX_N],
-            map_x_fine,
-            map_y,
-            cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_WRAP,
+            self.tex[(i0 + 3) % self.TEX_N], map_x_fine, map_y, cv2.INTER_LINEAR, borderMode=wrap
         )
         f1 = cv2.remap(
-            self.tex[(i1 + 3) % self.TEX_N],
-            map_x_fine,
-            map_y,
-            cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_WRAP,
+            self.tex[(i1 + 3) % self.TEX_N], map_x_fine, map_y, cv2.INTER_LINEAR, borderMode=wrap
         )
-        n_fine = f0 * (1 - frac) + f1 * frac
-        rays = np.clip(n * (0.5 + n_fine), 0, 1) ** self.p.sharpness
-        falloff = np.clip(1.0 - dist / self.p.reach, 0, 1) ** 1.5
-        value = rays * falloff
-        rim = self.p.rim_gain * np.exp(-dist / self.p.rim_width)
-        hue = (theta / (2 * np.pi) + t * self.p.hue_speed + dist * self.p.hue_twist) % 1.0
-        hsv = np.dstack(
-            [hue * 360.0, np.clip(1.0 - rim, 0.2, 1.0), np.clip(value + rim, 0, 1)]
-        ).astype(np.float32)
+        n_fine = cv2.addWeighted(f0, 1.0 - frac, f1, frac, 0.5)  # + 0.5 folded in
+        rays = cv2.multiply(n, n_fine)
+        np.clip(rays, 0, 1, out=rays)
+        cv2.pow(rays, self.p.sharpness, dst=rays)
+        falloff = dist * np.float32(-1.0 / self.p.reach)
+        falloff += np.float32(1.0)
+        np.clip(falloff, 0, 1, out=falloff)
+        cv2.pow(falloff, 1.5, dst=falloff)
+        value = cv2.multiply(rays, falloff)
+        rim = dist * np.float32(-1.0 / self.p.rim_width)
+        cv2.exp(rim, dst=rim)
+        rim *= np.float32(self.p.rim_gain)
+        hue = theta * np.float32(1.0 / two_pi)
+        hue += np.float32(t * self.p.hue_speed)
+        if self.p.hue_twist:
+            cv2.scaleAdd(dist, self.p.hue_twist, hue, dst=hue)
+        np.mod(hue, 1.0, out=hue)
+        hsv = np.empty((h, w, 3), np.float32)
+        np.multiply(hue, np.float32(360.0), out=hsv[..., 0])
+        np.subtract(np.float32(1.0), rim, out=hsv[..., 1])
+        np.clip(hsv[..., 1], 0.2, 1.0, out=hsv[..., 1])
+        np.add(value, rim, out=hsv[..., 2])
+        np.clip(hsv[..., 2], 0.0, 1.0, out=hsv[..., 2])
         rgb = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
-        rgb[binary.astype(bool)] = 0.0
+        rgb *= outside[..., None]  # black inside the head
         if s != 1.0:
             # No second full-res zeroing pass here: it costs ~2.3 ms at 720p and
             # compose already multiplies the halo by (1 - mask).
             rgb = cv2.resize(rgb, (W, H), interpolation=cv2.INTER_LINEAR)
-        np.clip(rgb, 0, 1, out=rgb)
+        # No final clip: HSV2RGB of V in [0,1] and a linear resize both stay in [0,1].
         return rgb
