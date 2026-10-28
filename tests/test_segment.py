@@ -161,3 +161,22 @@ def test_head_from_masks_leaves_inputs_alone_and_returns_float32():
     m = head_from_masks(hair, face, hp, feather=0)
     assert m.dtype == np.float32
     assert hair[0, 0] == 0.9  # not mutated in place
+
+
+@pytest.mark.skipif(not have_models, reason="run: make models")
+def test_small_inference_width_gives_full_size_mask_close_to_full_res():
+    img = cv2.imread(str(PORTRAIT))
+    H, W = img.shape[:2]
+    full, small = HeadSegmenter(infer_width=0), HeadSegmenter(infer_width=256)
+    try:
+        a, b = full.mask(img, 0), small.mask(img, 0)
+    finally:
+        full.close()
+        small.close()
+    assert a is not None and b is not None
+    assert b.mask.shape == (H, W)
+    assert b.mask.dtype == np.float32
+    ia, ib = a.mask > 0.5, b.mask > 0.5
+    iou = (ia & ib).sum() / (ia | ib).sum()
+    assert iou > 0.9, iou
+    assert abs(a.box.height - b.box.height) < 0.05 * a.box.height

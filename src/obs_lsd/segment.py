@@ -92,6 +92,7 @@ class HeadSegmenter:
         feather: int = 9,
         chin_margin: float = 0.06,
         delegate: str = "gpu",
+        infer_width: int = 320,
     ):
         if delegate not in ("gpu", "cpu"):
             raise ValueError(f"delegate must be 'gpu' or 'cpu', not {delegate!r}")
@@ -116,6 +117,10 @@ class HeadSegmenter:
         self.hold_frames = hold_frames
         self.feather = feather
         self.chin_margin = chin_margin
+        # Frames wider than this are shrunk before inference: the models work
+        # at 256x256 and 192x192 inside, and MediaPipe hands its confidence
+        # masks back at the input size. 0 disables.
+        self.infer_width = infer_width
         self._last: HeadMask | None = None
         self._missing = 0
         self._ts = -1
@@ -153,9 +158,13 @@ class HeadSegmenter:
         self._ts = max(self._ts + 1, int(timestamp_ms))
         # The Metal delegate aborts the process (a CHECK failure, not an
         # exception) when handed an SRGB image; SRGBA works on both delegates.
+        h, w = frame_bgr.shape[:2]
+        if 0 < self.infer_width < w:
+            sw = self.infer_width
+            sh = max(1, round(h * sw / w))
+            frame_bgr = cv2.resize(frame_bgr, (sw, sh), interpolation=cv2.INTER_LINEAR)
         rgba = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGBA)
         img = self._mp.Image(image_format=self._mp.ImageFormat.SRGBA, data=rgba)
-        h, w = rgba.shape[:2]
         fl = self._fl.detect_for_video(img, self._ts)
         if not fl.face_landmarks:
             return self._hold()
@@ -167,6 +176,9 @@ class HeadSegmenter:
         cm = seg.confidence_masks
         hair = cm[HAIR].numpy_view()[..., 0]
         face = cm[FACE].numpy_view()[..., 0]
+        if hair.shape != (h, w):
+            hair = cv2.resize(hair, (w, h), interpolation=cv2.INTER_LINEAR)
+            face = cv2.resize(face, (w, h), interpolation=cv2.INTER_LINEAR)
         face_h = abs(chin[1] - min(le.y, re.y) * h) * 2.0
         hp = chin_halfplane((h, w), chin, roll, self.chin_margin * face_h)
         m = head_from_masks(hair, face, hp, self.feather)
