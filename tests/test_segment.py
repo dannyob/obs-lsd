@@ -5,7 +5,13 @@ import numpy as np
 import pytest
 
 from obs_lsd import MODELS_DIR
-from obs_lsd.segment import HeadSegmenter, ModelsMissing, chin_halfplane, head_from_masks
+from obs_lsd.segment import (
+    HeadSegmenter,
+    ModelsMissing,
+    chin_halfplane,
+    head_from_masks,
+    mask_box,
+)
 
 PORTRAIT = Path(__file__).parent / "data" / "portrait.jpg"
 have_models = (MODELS_DIR / "face_landmarker.task").exists()
@@ -107,3 +113,70 @@ def test_head_from_masks_normalises_confidence():
     m = head_from_masks(hair, face, np.ones((6, 6), np.float32), feather=0)
     assert m[0, 0] == 0.0
     assert m[2, 3] == 1.0
+
+
+@pytest.mark.skipif(not have_models, reason="run: make models")
+def test_gpu_and_cpu_delegates_agree_on_the_portrait():
+    img = cv2.imread(str(PORTRAIT))
+    gpu, cpu = HeadSegmenter(delegate="gpu"), HeadSegmenter(delegate="cpu")
+    try:
+        a, b = gpu.mask(img, 0), cpu.mask(img, 0)
+    finally:
+        gpu.close()
+        cpu.close()
+    assert a is not None and b is not None
+    ia, ib = a.mask > 0.5, b.mask > 0.5
+    iou = (ia & ib).sum() / (ia | ib).sum()
+    assert iou > 0.9, iou
+
+
+def test_unknown_delegate_is_rejected():
+    with pytest.raises(ValueError):
+        HeadSegmenter(delegate="tpu")
+
+
+def test_mask_box_matches_nonzero_arithmetic():
+    rng = np.random.default_rng(1)
+    m = np.zeros((120, 160), np.float32)
+    m[30:91, 40:101] = rng.uniform(0.6, 1.0, (61, 61))  # solid blob
+    m[10:20, 10:20] = 0.3  # faint wash, below the 0.5 line
+    ys, xs = np.nonzero(m > 0.5)
+    box = mask_box(m)
+    assert box is not None
+    assert abs(box.cx - xs.mean()) < 1e-6 and abs(box.cy - ys.mean()) < 1e-6
+    assert box.height == ys.max() - ys.min() + 1 == 61
+
+
+def test_mask_box_none_when_too_small():
+    m = np.zeros((50, 50), np.float32)
+    m[10:13, 10:13] = 1.0  # 9 pixels
+    assert mask_box(m) is None
+    assert mask_box(m, min_pixels=9) is not None
+
+
+def test_head_from_masks_leaves_inputs_alone_and_returns_float32():
+    hair = np.full((8, 8), 0.9, np.float64)
+    face = np.zeros((8, 8), np.float64)
+    hp = np.ones((8, 8), np.float32)
+    m = head_from_masks(hair, face, hp, feather=0)
+    assert m.dtype == np.float32
+    assert hair[0, 0] == 0.9  # not mutated in place
+
+
+@pytest.mark.skipif(not have_models, reason="run: make models")
+def test_small_inference_width_gives_full_size_mask_close_to_full_res():
+    img = cv2.imread(str(PORTRAIT))
+    H, W = img.shape[:2]
+    full, small = HeadSegmenter(infer_width=0), HeadSegmenter(infer_width=256)
+    try:
+        a, b = full.mask(img, 0), small.mask(img, 0)
+    finally:
+        full.close()
+        small.close()
+    assert a is not None and b is not None
+    assert b.mask.shape == (H, W)
+    assert b.mask.dtype == np.float32
+    ia, ib = a.mask > 0.5, b.mask > 0.5
+    iou = (ia & ib).sum() / (ia | ib).sum()
+    assert iou > 0.9, iou
+    assert abs(a.box.height - b.box.height) < 0.05 * a.box.height

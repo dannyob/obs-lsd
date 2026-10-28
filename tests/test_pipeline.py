@@ -42,7 +42,7 @@ def test_step_centres_head_and_draws_halo():
 
 
 def test_lost_head_fades_halo_to_black():
-    cfg = PipelineConfig(width=320, height=180, fade_seconds=0.5)
+    cfg = PipelineConfig(width=320, height=180, fade_seconds=0.5, seg_lag=0, halo_lag=0)
     seg = FakeSeg()
     p = Pipeline(cfg, segmenter=seg)
     frame = np.full((240, 320, 3), (10, 200, 10), np.uint8)
@@ -68,7 +68,9 @@ def test_no_head_yet_returns_black_and_sets_timings():
 
 
 def test_frozen_reuses_last_mask():
-    cfg = PipelineConfig(width=320, height=180, head_frac=0.5, halo=HaloParams(spill_gain=0.0))
+    cfg = PipelineConfig(
+        width=320, height=180, head_frac=0.5, halo=HaloParams(spill_gain=0.0), seg_lag=0, halo_lag=0
+    )
     seg = FakeSeg()
     p = Pipeline(cfg, segmenter=seg)
     frame = np.full((240, 320, 3), (10, 200, 10), np.uint8)
@@ -114,3 +116,98 @@ def test_step_exposes_last_box_and_mask():
     assert p.last_box is None and p.last_mask_out is None
     p.step(np.zeros((240, 320, 3), np.uint8), 0.0)
     assert p.last_box.height == 80 and p.last_mask_out.shape == (180, 320)
+
+
+class FrameTagSeg(FakeSeg):
+    """Mask centred on x = frame[0, 0, 0], so a test can tell which frame a mask came from."""
+
+    def mask(self, frame, ts):
+        h, w = frame.shape[:2]
+        x = int(frame[0, 0, 0])
+        m = np.zeros((h, w), np.float32)
+        cv2.ellipse(m, (x, 120), (30, 40), 0, 0, 360, 1.0, -1)
+        return HeadMask(mask=m, box=HeadBox(cx=x, cy=120, height=80))
+
+
+def _tagged(x):
+    f = np.full((240, 320, 3), 50, np.uint8)
+    f[0, 0, 0] = x
+    return f
+
+
+def test_segment_thread_composes_with_the_previous_frames_mask():
+    p = Pipeline(PipelineConfig(width=320, height=180, seg_lag=1), segmenter=FrameTagSeg())
+    try:
+        p.step(_tagged(100), 0.0)
+        assert p.last_box.cx == 100  # first frame waits for its own mask
+        p.step(_tagged(140), 1 / 30)
+        assert p.last_box.cx == 100  # one frame behind
+        p.step(_tagged(180), 2 / 30)
+        assert p.last_box.cx == 140
+    finally:
+        p.close()
+
+
+def test_segment_inline_has_no_lag():
+    p = Pipeline(PipelineConfig(width=320, height=180, seg_lag=0), segmenter=FrameTagSeg())
+    try:
+        p.step(_tagged(100), 0.0)
+        p.step(_tagged(140), 1 / 30)
+        assert p.last_box.cx == 140
+    finally:
+        p.close()
+
+
+def test_segment_thread_failure_surfaces_in_step():
+    class Boom(FakeSeg):
+        def mask(self, frame, ts):
+            raise RuntimeError("segmenter died")
+
+    p = Pipeline(PipelineConfig(width=320, height=180, seg_lag=1), segmenter=Boom())
+    try:
+        with pytest.raises(RuntimeError, match="segmenter died"):
+            p.step(_tagged(100), 0.0)
+    finally:
+        p.close()
+
+
+class TimeTagHalo:
+    """Halo whose red channel encodes the time it was rendered for."""
+
+    p = HaloParams()
+
+    def render(self, mask, t):
+        out = np.zeros((*mask.shape, 3), np.float32)
+        out[..., 0] = t
+        return out
+
+
+def _bg_red(p, out):
+    return out[2, 2, 2]  # far corner, BGR -> index 2 is red
+
+
+def test_halo_thread_composes_with_the_previous_frames_halo():
+    cfg = PipelineConfig(
+        width=320, height=180, seg_lag=0, halo_lag=1, halo=HaloParams(spill_gain=0.0)
+    )
+    p = Pipeline(cfg, segmenter=FakeSeg())
+    p.halo = TimeTagHalo()
+    try:
+        assert _bg_red(p, p.step(_tagged(100), 0.0)) == 0  # first frame waits for its own
+        assert _bg_red(p, p.step(_tagged(100), 0.5)) == 0  # one frame behind
+        assert _bg_red(p, p.step(_tagged(100), 1.0)) == 128  # t=0.5 -> 0.5*255
+    finally:
+        p.close()
+
+
+def test_halo_inline_has_no_lag():
+    cfg = PipelineConfig(
+        width=320, height=180, seg_lag=0, halo_lag=0, halo=HaloParams(spill_gain=0.0)
+    )
+    p = Pipeline(cfg, segmenter=FakeSeg())
+    p.halo = TimeTagHalo()
+    try:
+        p.step(_tagged(100), 0.0)
+        assert _bg_red(p, p.step(_tagged(100), 0.5)) == 128
+    finally:
+        p.close()

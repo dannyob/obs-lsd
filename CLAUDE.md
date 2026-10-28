@@ -37,13 +37,28 @@ Zoom and OBS.
 ## Make targets
 
 `venv install-dev test lint format models smoke run baseline eval evolve
-judge-smoke clean`
+judge-smoke bench clean`
+
+`make bench` rsyncs `src/` and a 10s clip to another Mac (`BENCH_HOST`,
+default pequod) and times a render there; the per-round history is in
+`docs/perf-log.md`. Speed only means anything measured on the slower
+machine: the stage proportions differ from the M5 Max.
 
 ## Working here
 
 TDD: write a failing test, then the code, then run it. Run `make smoke`
 before claiming a change works end to end — passing unit tests alone is not
 enough. mediapipe must stay `<1.0` on macOS; 1.x crashes.
+
+Speed notes. MediaPipe runs on the Metal GPU delegate (`segment.py`); the
+frame must be handed over as SRGBA, since SRGB makes the delegate abort the
+process with a CHECK failure, not an exception. The segmenter and the halo
+each run on a worker thread one frame behind the loop (`seg_lag`,
+`halo_lag` in `PipelineConfig`; `--no-seg-thread`, `--no-halo-thread` on
+the CLI). Each step uses the previous frame's mask and halo, so a replay is
+still deterministic. The pure-numpy stages were rewritten as in-place cv2
+ops; keep it that way, a full-frame float temporary costs about 1ms on an
+M2 Max.
 
 Children fork from the sha recorded in `runs/baseline.json`, not from
 `HEAD`, so re-run `make baseline CLIP=…` after merging anything into

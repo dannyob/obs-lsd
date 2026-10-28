@@ -1,10 +1,13 @@
-.PHONY: help venv install-dev test lint format models smoke run clean baseline eval judge-smoke evolve
+.PHONY: help venv install-dev test lint format models smoke run clean baseline eval judge-smoke evolve bench
 .DEFAULT_GOAL := help
 UV := uv
 MODELS := src/obs_lsd/models
 SEG_URL := https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite
 FL_URL := https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task
 PORTRAIT_URL := https://storage.googleapis.com/mediapipe-assets/portrait.jpg
+BENCH_HOST ?= pequod
+BENCH_DIR ?= Public/src/dob/obs-lsd
+BENCH_CLIP ?= clips/bench-10s.mov
 
 help: ## Show targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -60,3 +63,12 @@ judge-smoke: ## One real judge call against the latest run dir
 
 evolve: models ## Run GENS generations of the loop on CLIP
 	$(UV) run obs-lsd-rig evolve $(CLIP) --gens $(GENS)
+
+bench: ## Sync src + BENCH_CLIP to BENCH_HOST, render there, print per-stage ms
+	@rsync -az --exclude models --exclude __pycache__ src/obs_lsd/ $(BENCH_HOST):$(BENCH_DIR)/src/obs_lsd/
+	@rsync -az pyproject.toml uv.lock $(BENCH_HOST):$(BENCH_DIR)/ && rsync -az $(BENCH_CLIP) $(BENCH_HOST):$(BENCH_DIR)/clips/
+	@ssh $(BENCH_HOST) 'cd $(BENCH_DIR) && export PATH=/opt/homebrew/bin:$$PATH && \rm -rf runs/bench && \
+	  uv run --quiet obs-lsd-rig render clips/$(notdir $(BENCH_CLIP)) --out runs/bench >/dev/null 2>&1 && \
+	  uv run --quiet python -c "import json; m=json.load(open(\"runs/bench/metrics.json\")); \
+	  print(\"bench $(BENCH_HOST): total=%.1fms segment=%.1fms halo=%.1fms compose=%.1fms  fps=%.1f  no_head=%.3f frames=%d\" % \
+	  (m[\"ms_total_mean\"], m[\"ms_segment_mean\"], m[\"ms_halo_mean\"], m[\"ms_compose_mean\"], 1000/m[\"ms_total_mean\"], m[\"no_head_frac\"], m[\"frames\"]))"'
