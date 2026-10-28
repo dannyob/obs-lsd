@@ -16,6 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.5"]
+syphon = ["syphon-python>=0.1"]
 
 [project.scripts]
 obs-lsd = "obs_lsd.cli:cli"

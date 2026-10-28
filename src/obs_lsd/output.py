@@ -1,4 +1,4 @@
-"""Sinks: OBS virtual camera and a cv2 preview window with hotkeys."""
+"""Sinks: OBS virtual camera, Syphon server, cv2 preview window with hotkeys."""
 
 from __future__ import annotations
 
@@ -35,6 +35,67 @@ class VirtualCam:
 
     def __exit__(self, *exc):
         self._cam.close()
+
+
+class SyphonMissing(RuntimeError):
+    pass
+
+
+def bgr_to_syphon_rgba(frame_bgr: np.ndarray, out: np.ndarray) -> np.ndarray:
+    """BGR frame to the RGBA layout a Syphon texture wants, written into `out`.
+
+    Syphon textures have their origin at the bottom-left, so the rows go in
+    bottom to top or OBS shows the frame upside down.
+    """
+    cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGBA, dst=out)
+    cv2.flip(out, 0, dst=out)
+    return out
+
+
+class SyphonSink:
+    """Publish frames as a Syphon server so OBS can take them as a Syphon Client source.
+
+    Syphon shares a GPU texture between apps on macOS, so unlike the virtual
+    camera it can feed OBS itself. The server announces itself through the
+    Cocoa run loop, which has to be pumped or no client ever sees it.
+    """
+
+    def __init__(self, width: int, height: int, name: str = "obs-lsd"):
+        try:
+            import Metal
+            import syphon
+            from Foundation import NSDate, NSRunLoop
+        except ImportError as e:
+            raise SyphonMissing(
+                "Syphon output needs the syphon-python package: uv pip install -e '.[syphon]'"
+            ) from e
+        from syphon.utils.raw import create_mtl_texture
+
+        self.name = name
+        self.frames = 0
+        self._server = syphon.SyphonMetalServer(name)
+        self._texture = create_mtl_texture(self._server.device, width, height)
+        self._region = Metal.MTLRegion((0, 0, 0), (width, height, 1))
+        self._row_bytes = width * 4
+        self._rgba = np.empty((height, width, 4), np.uint8)
+        self._runloop = NSRunLoop.currentRunLoop()
+        self._tick = NSDate.dateWithTimeIntervalSinceNow_
+        self._pump()
+
+    def _pump(self) -> None:
+        self._runloop.runUntilDate_(self._tick(0.0005))
+
+    def send(self, frame_bgr: np.ndarray) -> None:
+        bgr_to_syphon_rgba(frame_bgr, self._rgba)
+        self._texture.replaceRegion_mipmapLevel_withBytes_bytesPerRow_(
+            self._region, 0, self._rgba.data, self._row_bytes
+        )
+        self._server.publish_frame_texture(self._texture)
+        self._pump()
+        self.frames += 1
+
+    def close(self) -> None:
+        self._server.stop()
 
 
 KEYS = {

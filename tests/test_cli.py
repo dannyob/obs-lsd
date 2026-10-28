@@ -201,3 +201,65 @@ def test_video_input_to_video_output(tmp_path, monkeypatch):
         assert f.shape == (48, 64, 3)
     assert n == 12
     assert abs(cap.get(cv2.CAP_PROP_FPS) - 10.0) < 0.1  # output fps follows the input file
+
+
+def test_syphon_flag_sends_every_frame(tmp_path, monkeypatch):
+    import obs_lsd.cli as climod
+    import obs_lsd.output as outmod
+
+    sent = []
+
+    class FakeSyphon:
+        def __init__(self, width, height, name="obs-lsd"):
+            self.name = name
+            self.size = (width, height)
+
+        def send(self, frame):
+            sent.append(frame.shape)
+
+        def close(self):
+            sent.append("closed")
+
+    monkeypatch.setattr(outmod, "SyphonSink", FakeSyphon)
+    monkeypatch.setattr(climod, "Pipeline", _FakePipeline)
+    src = tmp_path / "in.png"
+    cv2.imwrite(str(src), np.zeros((20, 30, 3), np.uint8))
+    r = CliRunner().invoke(
+        cli,
+        [
+            "--input",
+            str(src),
+            "--seconds",
+            "0.1",
+            "--fps",
+            "30",
+            "--no-vcam",
+            "--no-preview",
+            "--syphon",
+            "--width",
+            "64",
+            "--height",
+            "36",
+        ],
+    )
+    assert r.exit_code == 0, r.output
+    assert sent[-1] == "closed"
+    assert sent[:-1] and all(s == (36, 64, 3) for s in sent[:-1])
+
+
+def test_syphon_missing_is_a_clean_error(tmp_path, monkeypatch):
+    import obs_lsd.cli as climod
+    import obs_lsd.output as outmod
+
+    def boom(*a, **k):
+        raise outmod.SyphonMissing("syphon-python is not installed")
+
+    monkeypatch.setattr(outmod, "SyphonSink", boom)
+    monkeypatch.setattr(climod, "Pipeline", _FakePipeline)
+    src = tmp_path / "in.png"
+    cv2.imwrite(str(src), np.zeros((20, 30, 3), np.uint8))
+    r = CliRunner().invoke(
+        cli, ["--input", str(src), "--seconds", "0.1", "--no-vcam", "--no-preview", "--syphon"]
+    )
+    assert r.exit_code == 1
+    assert "syphon-python" in r.output

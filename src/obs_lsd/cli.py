@@ -46,6 +46,11 @@ from obs_lsd.pipeline import Pipeline, PipelineConfig
 )
 @click.option("--no-vcam", is_flag=True, help="Do not open the virtual camera")
 @click.option("--no-preview", is_flag=True, help="No preview window")
+@click.option(
+    "--syphon",
+    is_flag=True,
+    help="Also publish frames as a Syphon server named obs-lsd, for an OBS Syphon Client source",
+)
 @click.option("--seconds", default=None, type=float, help="Stop after N seconds")
 @click.option("--dump-frame", default=None, type=click.Path(), help="Write the last frame as PNG")
 @click.option(
@@ -80,6 +85,7 @@ def cli(
     float_amp,
     no_vcam,
     no_preview,
+    syphon,
     seconds,
     dump_frame,
     output_path,
@@ -127,6 +133,7 @@ def cli(
         dump_frame,
         stats,
         output_path=output_path,
+        syphon=syphon,
     )
     if code:
         raise SystemExit(code)
@@ -142,9 +149,10 @@ def run(
     dump_frame,
     stats,
     output_path: str | None = None,
+    syphon: bool = False,
 ) -> int:
-    # a headless replay (no preview, no vcam) runs flat out; anything live is paced
-    realtime = not (no_vcam and no_preview)
+    # a headless replay (no preview, no vcam, no syphon) runs flat out; anything live is paced
+    realtime = not (no_vcam and no_preview and not syphon)
     try:
         src = FrameSource(source_spec, cfg.width, cfg.height, fps, realtime=realtime)
     except CameraError as e:
@@ -156,7 +164,7 @@ def run(
         click.echo(f"error: {e}", err=True)
         src.close()
         return 1
-    vcam = preview = sink = None
+    vcam = preview = sink = syphon_sink = None
     try:
         if output_path:
             from obs_lsd.output import VideoFileSink
@@ -171,6 +179,15 @@ def run(
             except VirtualCamMissing as e:
                 click.echo(f"error: {e}", err=True)
                 return 1
+        if syphon:
+            from obs_lsd import output
+
+            try:
+                syphon_sink = output.SyphonSink(cfg.width, cfg.height)
+                click.echo(f"syphon server: {syphon_sink.name}", err=True)
+            except output.SyphonMissing as e:
+                click.echo(f"error: {e}", err=True)
+                return 1
         if not no_preview:
             from obs_lsd.output import Preview
 
@@ -183,6 +200,8 @@ def run(
                 last = out
                 if vcam:
                     vcam.send(out)
+                if syphon_sink:
+                    syphon_sink.send(out)
                 if sink:
                     sink.write(out)
                 if preview:
@@ -212,6 +231,8 @@ def run(
             cleanups.append(preview.close)
         if sink:
             cleanups.append(sink.close)
+        if syphon_sink:
+            cleanups.append(syphon_sink.close)
         if vcam:
             cleanups.append(functools.partial(vcam.__exit__, None, None, None))
         cleanups += [pipe.close, src.close]

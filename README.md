@@ -61,6 +61,19 @@ If Zoom shows the camera but only black, OBS is still running. Only one
 program can feed the virtual camera, and OBS wins with its own, usually
 empty, scene. Quit OBS, restart obs-lsd, re-select the camera in Zoom.
 
+To use the halo as a layer inside an OBS scene instead, send it over
+[Syphon](https://syphon.github.io/), which OBS reads directly:
+
+```sh
+uv pip install -e '.[syphon]'
+obs-lsd --syphon --no-vcam
+```
+
+Then in OBS add a Syphon Client source and pick "python - obs-lsd". OBS
+hides its own virtual camera from its source list, so this is the only
+way to get obs-lsd into OBS. `--syphon` works alongside the virtual
+camera too; drop `--no-vcam` when OBS is not running and both get frames.
+
 When the segmenter loses your face (you turn away, walk off, the light
 goes), the last cutout is held, fades to black over a second, and comes
 back when you do. The cutout is hair plus face skin, so a hat is not part
@@ -88,6 +101,8 @@ and writes `/tmp/obs-lsd-smoke.png`.
 - `--width`, `--height`, `--fps` set the output format (default 1280x720
   at 30). `--seconds N` stops after N seconds; `--dump-frame x.png` saves
   the last frame on exit.
+- `--syphon` publishes frames as a Syphon server named `obs-lsd` for an OBS
+  Syphon Client source. Needs the `syphon` extra.
 - `--no-seg-thread` segments on the frame loop instead of a worker thread:
   one frame less latency, about 10ms more per frame. `--halo-thread` does
   the same trick for the halo and roughly halves the loop again, but the

@@ -12,7 +12,7 @@ Zoom and OBS.
 - `track.py` — smoothing + camera-to-output transform
 - `halo.py` — ray renderer (numpy backend)
 - `compose.py` — black + halo + head compositing
-- `output.py` — pyvirtualcam sink, cv2 preview, key handling
+- `output.py` — pyvirtualcam sink, Syphon sink (optional `syphon` extra), cv2 preview, key handling
 - `pipeline.py` — wires the above modules together
 - `cli.py` — click entry point (`obs-lsd`)
 
@@ -73,3 +73,8 @@ What holds is that the driver never checks out `main`, and promotion is a
 are model-written text pasted into the next agent's brief, so treat the
 loop as a prompt-injection path and don't aim it at anything untrusted.
 `runs/` and `clips/` are local and gitignored, not shipped with the repo.
+
+OBS cannot capture its own virtual camera, so `--syphon` (`SyphonSink` in
+`output.py`) is how obs-lsd gets into an OBS scene. The sink pumps the
+Cocoa run loop every frame; without that the server is never announced
+and no client lists it.
