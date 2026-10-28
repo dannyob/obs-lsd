@@ -98,12 +98,12 @@ class HaloRenderer:
         # Texture lookup: angle wraps around TEX_W, radius scrolls with time.
         # The coarsest noise octave has 8 cells across TEX_W, so scaling the
         # angle by density/8 makes `density` the number of rays around the head.
+        # No modulo on the lookup maps: remap with BORDER_WRAP tiles the texture
+        # for any coordinate, and its output is identical to the wrapped maps'.
         map_x = theta_n * np.float32((self.p.density / 8.0) * self.TEX_W)
-        np.mod(map_x, self.TEX_W, out=map_x)
         ky = self.TEX_H / self.p.reach
         map_y = dist * np.float32(ky)
         map_y -= np.float32(t * self.p.speed * ky)
-        np.mod(map_y, self.TEX_H, out=map_y)
         f = t * self.p.flicker * self.TEX_N
         i0 = int(f) % self.TEX_N
         i1 = (i0 + 1) % self.TEX_N
@@ -116,7 +116,6 @@ class HaloRenderer:
         # around the circle; fixed rate so it does not fight `density`. Cross-faded
         # between slices like `n`, otherwise it snaps to a new texture every tick.
         map_x_fine = theta_n * np.float32(3.0 * self.TEX_W)
-        np.mod(map_x_fine, self.TEX_W, out=map_x_fine)
         f0 = cv2.remap(
             self.tex[(i0 + 3) % self.TEX_N], map_x_fine, map_y, cv2.INTER_LINEAR, borderMode=wrap
         )

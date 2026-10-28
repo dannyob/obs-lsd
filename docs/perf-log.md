@@ -15,3 +15,4 @@ means from the rig's `metrics.json`. Target 16.7ms (60 fps).
 | 5b | shrink frame to 320 wide before inference, linear resize (round 2 again, without INTER_AREA) | (same bench) | 15.9 | | | | yes: segment 18.3 -> 15.9 |
 | 6 | segmenter on a worker thread, one frame behind the loop (`--seg-thread`, default on) | 14.9 | 0.1 (wait) | 10.1 | 3.9 | 67.0 | yes |
 | 7 | segmenter post-processing at inference size (worker 16 -> 10.6 ms/frame; bench loop unchanged) | 14.4 | 0.1 | 9.9 | 3.6 | 69.3 | yes |
+| 8 | halo: drop the three modulo passes; remap's BORDER_WRAP already tiles the texture | 12.8 | 0.1 | 7.9 | 4.0 | 78.0 | yes |
