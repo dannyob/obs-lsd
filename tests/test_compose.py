@@ -41,3 +41,24 @@ def test_spill_wraps_halo_colour_onto_head_edge_only():
     assert spilled[edge[1], edge[0], 2] > plain[edge[1], edge[0], 2] + 40  # red channel (BGR idx 2)
     assert spilled[edge[1], edge[0], 0] == plain[edge[1], edge[0], 0]  # blue untouched
     assert abs(int(spilled[100, 100, 2]) - int(plain[100, 100, 2])) <= 1  # centre unchanged
+
+
+def test_compose_matches_float_reference_within_one_level():
+    rng = np.random.default_rng(0)
+    frame = rng.integers(0, 256, (32, 48, 3), np.uint8)
+    mask = rng.random((32, 48), dtype=np.float32)
+    halo = rng.random((32, 48, 3), dtype=np.float32)
+    for gain in (1.0, 0.4):
+        ref = frame * mask[..., None] + halo[..., ::-1] * (255.0 * gain) * (1 - mask)[..., None]
+        ref = np.clip(ref + 0.5, 0, 255).astype(np.uint8)
+        out = compose(frame, mask, halo, halo_gain=gain)
+        assert np.abs(out.astype(int) - ref.astype(int)).max() <= 1
+
+
+def test_compose_returns_a_fresh_frame_each_call():
+    frame = np.full((4, 4, 3), 10, np.uint8)
+    mask = np.ones((4, 4), np.float32)
+    halo = np.zeros((4, 4, 3), np.float32)
+    a = compose(frame, mask, halo)
+    b = compose(frame * 2, mask, halo)
+    assert tuple(a[0, 0]) == (10, 10, 10) and tuple(b[0, 0]) == (20, 20, 20)
