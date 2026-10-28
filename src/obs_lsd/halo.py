@@ -139,14 +139,15 @@ class HaloRenderer:
         if self.p.hue_twist:
             cv2.scaleAdd(dist, self.p.hue_twist, hue, dst=hue)
         np.mod(hue, 1.0, out=hue)
-        hsv = np.empty((h, w, 3), np.float32)
-        np.multiply(hue, np.float32(360.0), out=hsv[..., 0])
-        np.subtract(np.float32(1.0), rim, out=hsv[..., 1])
-        np.clip(hsv[..., 1], 0.2, 1.0, out=hsv[..., 1])
-        np.add(value, rim, out=hsv[..., 2])
-        np.clip(hsv[..., 2], 0.0, 1.0, out=hsv[..., 2])
-        rgb = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
-        rgb *= outside[..., None]  # black inside the head
+        # H, S, V each finished in place on its own contiguous array, then one
+        # merge: cheaper than three strided writes into a (h, w, 3) buffer.
+        hue *= np.float32(360.0)
+        cv2.add(value, rim, dst=value)
+        np.clip(value, 0.0, 1.0, out=value)
+        value *= outside.astype(np.float32)  # V=0 inside the head -> RGB black
+        np.subtract(np.float32(1.0), rim, out=rim)
+        np.clip(rim, 0.2, 1.0, out=rim)
+        rgb = cv2.cvtColor(cv2.merge((hue, rim, value)), cv2.COLOR_HSV2RGB)
         if s != 1.0:
             # No second full-res zeroing pass here: it costs ~2.3 ms at 720p and
             # compose already multiplies the halo by (1 - mask).
