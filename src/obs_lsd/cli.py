@@ -32,10 +32,10 @@ from obs_lsd.pipeline import Pipeline, PipelineConfig
 )
 @click.option(
     "--halo-thread/--no-halo-thread",
-    default=True,
+    default=False,
     show_default=True,
-    help="Render the halo on a worker thread, one frame behind the loop (faster); "
-    "--no-halo-thread renders inline",
+    help="Render the halo on a worker thread, one frame behind the loop: faster, "
+    "but the halo then trails the cutout and a dark band can show at the edge",
 )
 @click.option(
     "--float",

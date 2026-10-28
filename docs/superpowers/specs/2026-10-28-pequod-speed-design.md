@@ -87,3 +87,36 @@ Baseline judge score for `main` is 39.5 in `runs/baseline.json`
 The order above is a guess; the bench decides. Any change that alters
 defaults visible to users (a new `--seg-stride` flag, a different halo
 scale) is documented in the README options list.
+
+## Outcome (2026-10-28)
+
+Ten rounds, eight kept, on branch `perf/pequod`; the per-round numbers
+are in `docs/perf-log.md`. The bench clip went from 163ms a frame (6 fps)
+to 12ms (83 fps) on pequod, and the paced live path with the virtual
+camera on runs at 12 to 15ms a frame, so 60 fps holds. Round 10, a halo
+worker one frame behind, reached 4.9ms but the judge preferred the inline
+halo 5-0 (a dark band where the cutout had moved off the stale halo's
+black interior), so it is an opt-in flag, off by default.
+
+What mattered, in order:
+
+1. The Metal GPU delegate: the multiclass segmenter is 120ms on the M2
+   Max CPU and 6ms on its GPU. The image must be SRGBA; SRGB aborts the
+   process. 163 to 49ms.
+2. Compose in uint8 with `cv2.blendLinear`: 9.6 to 3.4ms.
+3. A worker thread one frame behind the loop for the segmenter. MediaPipe
+   and OpenCV release the GIL, so it overlaps with the loop almost
+   completely. 29.5 to 14.9ms.
+4. Replacing numpy temporaries with in-place cv2 ops in the segmenter's
+   post-processing and the halo, each change checked bit-identical
+   against a saved render. About 12ms in total.
+
+Rejected: shrinking the frame before inference with `INTER_AREA` (round
+2) cost more than it saved; the same change with a linear resize (round
+5b) saved 2.4ms. The `seg_stride` experiment from pequod's checkout was
+not needed; it is still in pequod's stash.
+
+The judge scored the full clip 37, 36, 38 after rounds 3, 5 and 6
+against the baseline's 39.5, all inside the five-point gate, and a
+pairwise A/B of round 6 against the baseline split 2 to 1. The A/B was
+the instrument that caught round 10; absolute scores did not.

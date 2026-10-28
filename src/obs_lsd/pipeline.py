@@ -24,9 +24,11 @@ class PipelineConfig:
     # frame's mask, so the frame loop overlaps MediaPipe instead of waiting on
     # it. Costs one frame of latency. 0: segment inline, no lag.
     seg_lag: int = 1
-    # 1: render the halo on a second worker, one frame behind; the halo then
-    # trails the cutout by a frame. 0: render inline.
-    halo_lag: int = 1
+    # 1: render the halo on a second worker, one frame behind. Off by default:
+    # the halo is then drawn for the previous frame's contour, and where the
+    # cutout has moved its black interior shows as a band at the edge. The
+    # judge picked the inline render 5-0. 0: render inline.
+    halo_lag: int = 0
     halo: HaloParams = field(default_factory=HaloParams)
     fade_seconds: float = 1.0
     float_amp: float = 0.03  # gentle drift of the head about the centre, x frame height

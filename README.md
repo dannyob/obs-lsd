@@ -6,13 +6,18 @@ a virtual camera for Zoom or OBS.
 
 ![A head floating in a slowly turning rainbow halo](docs/demo.gif)
 
-macOS on Apple Silicon (Intel untested), Python 3.12. Runs on the CPU,
-around 40ms a frame on an M5 Max, most of it MediaPipe's segmenter:
+macOS on Apple Silicon (Intel untested), Python 3.12. MediaPipe runs on
+the GPU through Metal and the segmenter runs on its own thread one frame
+behind, so a frame costs about 12ms on an M2 Max and 14ms on an M5 Max,
+enough for 60 fps on either:
 
 ```
 $ obs-lsd --input tests/data/portrait.jpg --seconds 3 --no-vcam --no-preview --stats
-segment=27.0ms warp=0.3ms halo=8.6ms compose=4.6ms total=40.5ms
+segment=6.1ms warp=0.8ms halo=4.7ms compose=2.2ms total=13.8ms
 ```
+
+The `segment` figure is how long the loop waited on the segmenter thread,
+not how long segmentation took.
 
 ## Install
 
@@ -83,6 +88,11 @@ and writes `/tmp/obs-lsd-smoke.png`.
 - `--width`, `--height`, `--fps` set the output format (default 1280x720
   at 30). `--seconds N` stops after N seconds; `--dump-frame x.png` saves
   the last frame on exit.
+- `--no-seg-thread` segments on the frame loop instead of a worker thread:
+  one frame less latency, about 10ms more per frame. `--halo-thread` does
+  the same trick for the halo and roughly halves the loop again, but the
+  halo then trails the cutout by a frame and a dark band can show at the
+  edge when the head moves, so it is off by default.
 
 ## Evaluation rig
 
@@ -119,8 +129,11 @@ make smoke    # end-to-end on the still portrait
 
 Tests are written first here; `make smoke` is the bar before a change
 counts as working. MediaPipe must stay below 1.0 on macOS; the 1.x
-releases crash. The design notes and implementation plans that produced
-the code are in `docs/superpowers/`.
+releases crash. `make bench BENCH_HOST=othermac` rsyncs the source and a
+short clip to another Mac over ssh and times a render there; the rounds
+that took an M2 Max from 6 fps to 83 are in `docs/perf-log.md`. The
+design notes and implementation plans that produced the code are in
+`docs/superpowers/`.
 
 ## License
 
