@@ -36,25 +36,52 @@ def chin_halfplane(shape, chin_xy, roll_deg: float, margin_px: float) -> np.ndar
     """1.0 on the 'above chin' side of a line through chin_xy tilted by roll_deg, else 0."""
     h, w = shape
     r = math.radians(roll_deg)
-    # 'down' unit vector rotated by roll
+    # 'down' unit vector rotated by roll, and the line direction across it
     dx, dy = -math.sin(r), math.cos(r)
-    # separable: the distance to the line is a sum of a per-column and a per-row
-    # term, so build two 1-D ramps instead of a full HxW mgrid every frame
-    xs = (np.arange(w, dtype=np.float32) - chin_xy[0]) * dx
-    ys = (np.arange(h, dtype=np.float32) - chin_xy[1]) * dy - margin_px
-    return (xs[None, :] + ys[:, None] <= 0).astype(np.float32)
+    ux, uy = math.cos(r), math.sin(r)
+    cx, cy = chin_xy[0] + margin_px * dx, chin_xy[1] + margin_px * dy
+    # Fill the kept side as one big quadrilateral: a polygon fill is a single
+    # C++ pass, where building the half-plane from broadcast ramps is three
+    # full-frame numpy passes (add, compare, cast).
+    reach = 4.0 * (w + h)
+    pts = np.array(
+        [
+            [cx + reach * ux, cy + reach * uy],
+            [cx - reach * ux, cy - reach * uy],
+            [cx - reach * ux - reach * dx, cy - reach * uy - reach * dy],
+            [cx + reach * ux - reach * dx, cy + reach * uy - reach * dy],
+        ]
+    )
+    hp = np.zeros((h, w), np.float32)
+    cv2.fillConvexPoly(hp, np.rint(pts).astype(np.int32), 1.0)
+    return hp
 
 
 def head_from_masks(hair, face, halfplane, feather: int) -> np.ndarray:
-    m = np.maximum(hair, face) * halfplane
+    m = np.maximum(hair, face).astype(np.float32, copy=False)
+    m *= halfplane
     # MediaPipe's confidence masks rarely reach 1.0 even on the middle of a
     # face, and leave a low wash over the background; stretch [0.15,0.85] to
-    # [0,1] so the head is solid and the wash is gone before feathering
-    m = np.clip((m - 0.15) / 0.7, 0, 1)
+    # [0,1] so the head is solid and the wash is gone before feathering.
+    # In place: each temporary here is a full camera frame of float32.
+    m -= 0.15
+    m *= 1.0 / 0.7
+    np.clip(m, 0, 1, out=m)
     if feather > 0:
         k = feather * 2 + 1
-        m = cv2.GaussianBlur(m, (k, k), 0)
-    return np.clip(m, 0, 1).astype(np.float32)
+        m = cv2.GaussianBlur(m, (k, k), 0)  # a blur of [0,1] stays in [0,1]
+    return m
+
+
+def mask_box(m: np.ndarray, min_pixels: int = 50) -> HeadBox | None:
+    """Centroid and height of the mask's >0.5 region, or None if it is too small."""
+    b = (m > 0.5).view(np.uint8)
+    mom = cv2.moments(b, binaryImage=True)
+    n = mom["m00"]
+    if n < min_pixels:
+        return None
+    _, _, _, bh = cv2.boundingRect(b)
+    return HeadBox(cx=mom["m10"] / n, cy=mom["m01"] / n, height=float(bh))
 
 
 class HeadSegmenter:
@@ -143,12 +170,9 @@ class HeadSegmenter:
         face_h = abs(chin[1] - min(le.y, re.y) * h) * 2.0
         hp = chin_halfplane((h, w), chin, roll, self.chin_margin * face_h)
         m = head_from_masks(hair, face, hp, self.feather)
-        ys, xs = np.nonzero(m > 0.5)
-        if len(ys) < 50:
+        box = mask_box(m)
+        if box is None:
             return self._hold()
-        box = HeadBox(
-            cx=float(xs.mean()), cy=float(ys.mean()), height=float(ys.max() - ys.min() + 1)
-        )
         self._last = HeadMask(mask=m, box=box)
         self._missing = 0
         return self._last
