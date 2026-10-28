@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import sys
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -93,6 +94,7 @@ class HeadSegmenter:
         chin_margin: float = 0.06,
         delegate: str = "gpu",
         infer_width: int = 320,
+        reopen_every: int = 1000,
     ):
         if delegate not in ("gpu", "cpu"):
             raise ValueError(f"delegate must be 'gpu' or 'cpu', not {delegate!r}")
@@ -124,6 +126,19 @@ class HeadSegmenter:
         self._last: HeadMask | None = None
         self._missing = 0
         self._ts = -1
+        # MediaPipe's GPU tasks leak one IOSurface per frame on macOS (about
+        # 0.5MB at infer_width 320) until the task is closed; the process
+        # aborts with "Error creating pixel buffer" after a few thousand
+        # frames. Closing the tasks frees it all, so every reopen_every
+        # frames a replacement pair is built on a worker thread and swapped
+        # in once ready, which costs the frame loop nothing. 0 disables.
+        self._paths = (seg_path, fl_path)
+        self.reopen_every = reopen_every if self.delegate == "gpu" else 0
+        self.opens = 1
+        self.reopens = 0
+        self._frames = 0
+        self._pool: ThreadPoolExecutor | None = None
+        self._replacement: Future | None = None
 
     def _open_models(self, seg_path: Path, fl_path: Path, delegate: str):
         from mediapipe.tasks.python import BaseOptions, vision
@@ -149,11 +164,41 @@ class HeadSegmenter:
         )
         return seg, fl
 
+    def _build_replacement(self):
+        seg, fl = self._open_models(*self._paths, self.delegate)
+        self.opens += 1
+        return seg, fl
+
+    def _maybe_reopen(self) -> None:
+        if self._replacement is not None and self._replacement.done():
+            old_seg, old_fl = self._seg, self._fl
+            self._seg, self._fl = self._replacement.result()
+            self._replacement = None
+            old_seg.close()
+            old_fl.close()
+            self.reopens += 1
+        self._frames += 1
+        if (
+            self.reopen_every
+            and self._frames % self.reopen_every == 0
+            and self._replacement is None
+        ):
+            if self._pool is None:
+                self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="seg-reopen")
+            self._replacement = self._pool.submit(self._build_replacement)
+
     def close(self) -> None:
+        if self._pool is not None:
+            self._pool.shutdown(wait=True)
+            if self._replacement is not None:
+                for task in self._replacement.result():
+                    task.close()
+                self._replacement = None
         self._seg.close()
         self._fl.close()
 
     def mask(self, frame_bgr: np.ndarray, timestamp_ms: int) -> HeadMask | None:
+        self._maybe_reopen()
         # MediaPipe VIDEO mode needs strictly increasing timestamps
         self._ts = max(self._ts + 1, int(timestamp_ms))
         # The Metal delegate aborts the process (a CHECK failure, not an

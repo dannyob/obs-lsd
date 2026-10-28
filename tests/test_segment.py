@@ -180,3 +180,45 @@ def test_small_inference_width_gives_full_size_mask_close_to_full_res():
     iou = (ia & ib).sum() / (ia | ib).sum()
     assert iou > 0.9, iou
     assert abs(a.box.height - b.box.height) < 0.05 * a.box.height
+
+
+@pytest.mark.skipif(not have_models, reason="run: make models")
+def test_segmenter_reopens_its_tasks_in_the_background():
+    # MediaPipe's GPU tasks leak an IOSurface per frame on macOS until the
+    # task is closed, and the process aborts after a few thousand frames.
+    # The segmenter builds replacement tasks on a worker thread every
+    # reopen_every frames and swaps them in once they are warm.
+    import time
+
+    img = cv2.imread(str(PORTRAIT))
+    seg = HeadSegmenter(reopen_every=4)
+    try:
+        opens = seg.opens
+        t = 0
+        for _ in range(4):
+            seg.mask(img, t)
+            t += 33
+        deadline = time.monotonic() + 30
+        while seg.reopens == 0 and time.monotonic() < deadline:
+            seg.mask(img, t)
+            t += 33
+            time.sleep(0.01)
+        assert seg.reopens == 1
+        assert seg.opens == opens + 1
+        hm = seg.mask(img, t)
+        assert hm is not None and hm.box.height > 50
+    finally:
+        seg.close()
+
+
+def test_segmenter_reopen_zero_never_reopens(monkeypatch):
+    if not have_models:
+        pytest.skip("run: make models")
+    img = cv2.imread(str(PORTRAIT))
+    seg = HeadSegmenter(reopen_every=0)
+    try:
+        for i in range(6):
+            seg.mask(img, i * 33)
+        assert seg.reopens == 0 and seg.opens == 1
+    finally:
+        seg.close()

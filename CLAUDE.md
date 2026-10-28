@@ -58,7 +58,11 @@ each run on a worker thread one frame behind the loop (`seg_lag`,
 the CLI). Each step uses the previous frame's mask and halo, so a replay is
 still deterministic. The pure-numpy stages were rewritten as in-place cv2
 ops; keep it that way, a full-frame float temporary costs about 1ms on an
-M2 Max.
+M2 Max. MediaPipe's GPU tasks leak one IOSurface per frame on macOS until
+the task is closed, and the process aborts after a few thousand frames
+("Error creating pixel buffer: -6662"), so `HeadSegmenter` rebuilds both
+tasks on a worker thread every `reopen_every` frames and swaps them in;
+any soak test of the live path has to run past that count.
 
 Children fork from the sha recorded in `runs/baseline.json`, not from
 `HEAD`, so re-run `make baseline CLIP=…` after merging anything into

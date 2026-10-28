@@ -24,3 +24,17 @@ bench; 12-15ms on the paced live path with the virtual camera on. Judge on
 the full clip after rounds 3/5/6/10: 37, 36, 38, 38 against the baseline's
 39.5. Pairwise against the baseline: round 6 split 2-1, round 10 lost 3-0,
 and round 6 beat round 10 5-0.
+
+## Follow-up (2026-10-28): the GPU delegate leaks
+
+The first long live run on the M5 Max aborted after about 8,000 frames
+with `Error creating pixel buffer: -6662` inside MediaPipe. Reproduced
+headless on the still portrait at the same frame count. `vmmap` shows
+every GPU task holding one more IOSurface per frame (235MB per 1,000
+frames for the segmenter, 470MB for the landmarker, at infer_width 320)
+until the task is closed, after which it is all freed. The CPU delegate
+does not leak. Fix: `HeadSegmenter` opens a replacement pair of tasks on
+a worker thread every 1,000 frames and swaps them in once built; the
+frame loop never waits (worst frame 8ms across 5,000 frames with swaps),
+IOSurface use stays under 0.5GB, and the pequod bench is unchanged at
+11.7ms.
