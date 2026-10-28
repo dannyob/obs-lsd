@@ -107,3 +107,23 @@ def test_head_from_masks_normalises_confidence():
     m = head_from_masks(hair, face, np.ones((6, 6), np.float32), feather=0)
     assert m[0, 0] == 0.0
     assert m[2, 3] == 1.0
+
+
+@pytest.mark.skipif(not have_models, reason="run: make models")
+def test_gpu_and_cpu_delegates_agree_on_the_portrait():
+    img = cv2.imread(str(PORTRAIT))
+    gpu, cpu = HeadSegmenter(delegate="gpu"), HeadSegmenter(delegate="cpu")
+    try:
+        a, b = gpu.mask(img, 0), cpu.mask(img, 0)
+    finally:
+        gpu.close()
+        cpu.close()
+    assert a is not None and b is not None
+    ia, ib = a.mask > 0.5, b.mask > 0.5
+    iou = (ia & ib).sum() / (ia | ib).sum()
+    assert iou > 0.9, iou
+
+
+def test_unknown_delegate_is_rejected():
+    with pytest.raises(ValueError):
+        HeadSegmenter(delegate="tpu")

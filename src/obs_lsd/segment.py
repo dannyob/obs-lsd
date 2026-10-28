@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -63,34 +64,58 @@ class HeadSegmenter:
         hold_frames: int = 10,
         feather: int = 9,
         chin_margin: float = 0.06,
+        delegate: str = "gpu",
     ):
+        if delegate not in ("gpu", "cpu"):
+            raise ValueError(f"delegate must be 'gpu' or 'cpu', not {delegate!r}")
         seg_path, fl_path = models_dir / SEG_MODEL, models_dir / FL_MODEL
         if not (seg_path.exists() and fl_path.exists()):
             raise ModelsMissing(f"MediaPipe models not found in {models_dir}; run `make models`")
         import mediapipe as mp
-        from mediapipe.tasks.python import BaseOptions, vision
 
         self._mp = mp
-        self._seg = vision.ImageSegmenter.create_from_options(
-            vision.ImageSegmenterOptions(
-                base_options=BaseOptions(model_asset_path=str(seg_path)),
-                running_mode=vision.RunningMode.VIDEO,
-                output_confidence_masks=True,
-            )
-        )
-        self._fl = vision.FaceLandmarker.create_from_options(
-            vision.FaceLandmarkerOptions(
-                base_options=BaseOptions(model_asset_path=str(fl_path)),
-                running_mode=vision.RunningMode.VIDEO,
-                num_faces=1,
-            )
-        )
+        # The multiclass segmenter is 120ms a frame on an M2 Max CPU and 6ms on
+        # its GPU via Metal. If the GPU delegate cannot be created (Linux
+        # without a GPU, say) fall back to the CPU rather than fail.
+        try:
+            self._seg, self._fl = self._open_models(seg_path, fl_path, delegate)
+            self.delegate = delegate
+        except Exception as e:  # mediapipe raises plain RuntimeError
+            if delegate == "cpu":
+                raise
+            print(f"obs-lsd: GPU delegate unavailable ({e}); using CPU", file=sys.stderr)
+            self._seg, self._fl = self._open_models(seg_path, fl_path, "cpu")
+            self.delegate = "cpu"
         self.hold_frames = hold_frames
         self.feather = feather
         self.chin_margin = chin_margin
         self._last: HeadMask | None = None
         self._missing = 0
         self._ts = -1
+
+    def _open_models(self, seg_path: Path, fl_path: Path, delegate: str):
+        from mediapipe.tasks.python import BaseOptions, vision
+
+        def base(path):
+            if delegate == "gpu":
+                return BaseOptions(model_asset_path=str(path), delegate=BaseOptions.Delegate.GPU)
+            return BaseOptions(model_asset_path=str(path))
+
+        seg = vision.ImageSegmenter.create_from_options(
+            vision.ImageSegmenterOptions(
+                base_options=base(seg_path),
+                running_mode=vision.RunningMode.VIDEO,
+                output_confidence_masks=True,
+            )
+        )
+        fl = vision.FaceLandmarker.create_from_options(
+            vision.FaceLandmarkerOptions(
+                base_options=base(fl_path),
+                running_mode=vision.RunningMode.VIDEO,
+                num_faces=1,
+            )
+        )
+        return seg, fl
 
     def close(self) -> None:
         self._seg.close()
@@ -99,9 +124,11 @@ class HeadSegmenter:
     def mask(self, frame_bgr: np.ndarray, timestamp_ms: int) -> HeadMask | None:
         # MediaPipe VIDEO mode needs strictly increasing timestamps
         self._ts = max(self._ts + 1, int(timestamp_ms))
-        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        img = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=rgb)
-        h, w = rgb.shape[:2]
+        # The Metal delegate aborts the process (a CHECK failure, not an
+        # exception) when handed an SRGB image; SRGBA works on both delegates.
+        rgba = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGBA)
+        img = self._mp.Image(image_format=self._mp.ImageFormat.SRGBA, data=rgba)
+        h, w = rgba.shape[:2]
         fl = self._fl.detect_for_video(img, self._ts)
         if not fl.face_landmarks:
             return self._hold()
