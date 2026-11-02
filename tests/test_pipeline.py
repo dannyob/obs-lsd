@@ -1,3 +1,5 @@
+import itertools
+
 import cv2
 import numpy as np
 import pytest
@@ -211,3 +213,101 @@ def test_halo_inline_has_no_lag():
         assert _bg_red(p, p.step(_tagged(100), 0.5)) == 128
     finally:
         p.close()
+
+
+def _head_cfg():
+    return PipelineConfig(
+        width=320,
+        height=180,
+        head_frac=0.5,
+        float_amp=0.0,
+        seg_lag=0,
+        halo=HaloParams(reach=40.0, spill_gain=0.0),
+    )
+
+
+def test_place_glides_the_head_there():
+    p = Pipeline(_head_cfg(), segmenter=FakeSeg())
+    frame = np.full((240, 320, 3), (10, 200, 10), np.uint8)
+    p.step(frame, 0.0)
+    p.place(80, 100)  # target offset (-80, +10) from the centre
+    xs = []
+    for i in range(1, 31):
+        out = p.step(frame, i / 30)
+        xs.append(p.offset[0])
+    assert -80 < xs[0] < -5  # moved on the first frame, but not all the way
+    assert all(b <= a for a, b in itertools.pairwise(xs))  # steadily, no overshoot
+    assert abs(xs[9] + 80) < 0.1 * 80  # most of the way within a third of a second
+    assert tuple(out[100, 80]) == (10, 200, 10)  # settled there after a second
+
+
+def test_nudge_and_recentre_set_the_target():
+    p = Pipeline(_head_cfg(), segmenter=FakeSeg())
+    p.nudge(-1, 0)
+    assert p.target[0] < 0 and p.target[1] == 0
+    p.nudge(0, 1)
+    assert p.target[1] > 0
+    p.recentre()
+    assert p.target == [0.0, 0.0]
+
+
+def test_target_is_clamped_to_the_frame():
+    p = Pipeline(_head_cfg(), segmenter=FakeSeg())
+    for _ in range(1000):
+        p.nudge(1, -1)
+    assert p.target == [160.0, -90.0]
+    p.place(-500, 9999)
+    assert p.target == [-160.0, 90.0]
+
+
+def _settle(p, frame, t0=0.0, seconds=1.0):
+    for i in range(1, int(seconds * 30) + 1):
+        p.step(frame, t0 + i / 30)
+    return t0 + seconds
+
+
+def _mask_bbox(p):
+    ys, xs = np.nonzero(p.last_mask_out > 0.5)
+    return xs.min(), ys.min(), xs.max(), ys.max()
+
+
+def test_fit_shrinks_the_head_to_fit_in_a_corner_and_grows_back_in_the_middle():
+    cfg = _head_cfg()
+    p = Pipeline(cfg, segmenter=FakeSeg())
+    frame = np.full((240, 320, 3), (10, 200, 10), np.uint8)
+    p.step(frame, 0.0)
+    _, y0, _, y1 = _mask_bbox(p)
+    full_h = y1 - y0
+    p.place_fit(30, 30)
+    assert p.zoom_target < 1.0
+    t = _settle(p, frame)
+    x0, y0, _, y1 = _mask_bbox(p)
+    border = cfg.fit_border * cfg.height
+    assert x0 >= border - 2 and y0 >= border - 2  # inside the frame, with a margin
+    assert y1 - y0 < 0.8 * full_h
+    p.place_fit(160, 90)
+    assert p.zoom_target == 1.0
+    _settle(p, frame, t)
+    _, y0, _, y1 = _mask_bbox(p)
+    assert abs((y1 - y0) - full_h) <= 2
+
+
+def test_size_changes_in_step_with_the_move():
+    p = Pipeline(_head_cfg(), segmenter=FakeSeg())
+    frame = np.full((240, 320, 3), (10, 200, 10), np.uint8)
+    p.step(frame, 0.0)
+    p.place_fit(30, 30)
+    p.step(frame, 1 / 30)
+    moved = p.offset[0] / p.target[0]
+    shrunk = (1 - p.zoom) / (1 - p.zoom_target)
+    assert 0 < moved < 1 and moved == pytest.approx(shrunk)
+
+
+def test_left_place_keeps_size_and_recentre_restores_it():
+    p = Pipeline(_head_cfg(), segmenter=FakeSeg())
+    p.place_fit(30, 30)
+    z = p.zoom_target
+    p.place(200, 100)
+    assert p.zoom_target == z
+    p.recentre()
+    assert p.zoom_target == 1.0 and p.target == [0.0, 0.0]

@@ -51,11 +51,19 @@ camera macOS lists; `--camera` picks another. With the preview window focused:
 | `]` / `[` | grow / shrink the head |
 | `.` / `,` | longer / shorter rays |
 | `=` / `-` | faster / slower hue cycle |
-| `s` | freeze the head cutout (the halo keeps moving) |
+| `w` `a` `s` `d` | move the head up / left / down / right |
+| click or drag | glide the head to the pointer |
+| right-click or right-drag | glide there and resize the head to fit inside the frame at that spot (smaller near edges, back to full size in the middle) |
+| `}` / `{` | glide faster / slower (prints the new `--glide` value) |
+| `c` | recentre the head at its preset size |
+| `S` (capital) | freeze the head cutout (the halo keeps moving); the preview shows FROZEN |
 | `p` | print the current head size and halo settings to stderr |
+| `h` | hide / show the key list in the preview |
 
-The preview window is only there for the keys; `--no-preview` drops it and
-the virtual camera carries on.
+The preview window is only there for the keys, and lists them in its corner;
+that list and the FROZEN flag are drawn only in the preview, never in what
+Zoom or OBS receives. `--no-preview` drops the window and the virtual camera
+carries on.
 
 If Zoom shows the camera but only black, OBS is still running. Only one
 program can feed the virtual camera, and OBS wins with its own, usually
@@ -65,8 +73,8 @@ To use the halo as a layer inside an OBS scene instead, send it over
 [Syphon](https://syphon.github.io/), which OBS reads directly:
 
 ```sh
-uv pip install -e '.[syphon]'
-obs-lsd --syphon --no-vcam
+make obs            # installs the syphon extra, then runs obs-lsd --syphon --no-vcam
+make obs ARGS='--glide 0.6 --halo-reach 300'
 ```
 
 Then in OBS add a Syphon Client source and pick "python - obs-lsd". OBS

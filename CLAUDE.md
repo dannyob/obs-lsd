@@ -36,7 +36,7 @@ Zoom and OBS.
 
 ## Make targets
 
-`venv install-dev test lint format models smoke run baseline eval evolve
+`venv install-dev test lint format models smoke run obs baseline eval evolve
 judge-smoke bench clean`
 
 `make bench` rsyncs `src/` and a 10s clip to another Mac (`BENCH_HOST`,

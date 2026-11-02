@@ -98,29 +98,111 @@ class SyphonSink:
         self._server.stop()
 
 
-KEYS = {
-    ord("q"): "quit",
-    27: "quit",
-    ord("]"): "size+",
-    ord("["): "size-",
-    ord("="): "hue+",
-    ord("-"): "hue-",
-    ord("."): "reach+",
-    ord(","): "reach-",
-    ord("s"): "freeze",
-    ord("p"): "print",
-}
+# (keys, action, help text). Freeze is a capital S: a stray lowercase s used
+# to freeze the mask with nothing on screen to say so.
+BINDINGS = [
+    (("q", 27), "quit", "q/Esc  quit"),
+    (("]",), "size+", "] [    head bigger / smaller"),
+    (("[",), "size-", None),
+    (("=",), "hue+", "= -    colours faster / slower"),
+    (("-",), "hue-", None),
+    ((".",), "reach+", ". ,    halo longer / shorter"),
+    ((",",), "reach-", None),
+    (("w",), "up", "w a s d  move head"),
+    (("a",), "left", None),
+    (("s",), "down", None),
+    (("d",), "right", None),
+    (("}",), "glide+", "} {    glide faster / slower"),
+    (("{",), "glide-", None),
+    (("c",), "centre", "c      recentre head, full size"),
+    (("S",), "freeze", "S      freeze / unfreeze mask"),
+    (("p",), "print", "p      print settings"),
+]
+HELP_KEY = ord("h")
+KEYS = {(k if isinstance(k, int) else ord(k)): action for keys, action, _ in BINDINGS for k in keys}
+KEY_HELP = [h for _, _, h in BINDINGS if h] + [
+    "click  glide head there (or drag)",
+    "right-click  glide there, sized to fit",
+    "h      hide / show this",
+]
+
+
+class MouseState:
+    """Remembers where a button was last pressed or dragged in the preview.
+
+    Left button: ("place", x, y), move the head there. Right button:
+    ("fit", x, y), move it there and resize it to fit.
+    """
+
+    def __init__(self):
+        self._pending: tuple[str, int, int] | None = None
+
+    def on_mouse(self, event, x, y, flags, _param) -> None:
+        if event == cv2.EVENT_LBUTTONDOWN or (
+            event == cv2.EVENT_MOUSEMOVE and flags & cv2.EVENT_FLAG_LBUTTON
+        ):
+            self._pending = ("place", x, y)
+        elif event == cv2.EVENT_RBUTTONDOWN or (
+            event == cv2.EVENT_MOUSEMOVE and flags & cv2.EVENT_FLAG_RBUTTON
+        ):
+            self._pending = ("fit", x, y)
+
+    def take(self) -> tuple[str, int, int] | None:
+        p, self._pending = self._pending, None
+        return p
+
+
+def _text(img, s, org, scale):
+    # a dark outline under the white text keeps it legible over the halo
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    cv2.putText(img, s, org, font, scale, (0, 0, 0), 4, cv2.LINE_AA)
+    cv2.putText(img, s, org, font, scale, (255, 255, 255), 1, cv2.LINE_AA)
+
+
+def draw_overlay(frame_bgr: np.ndarray, frozen: bool, show_keys: bool) -> np.ndarray:
+    """The preview's copy of a frame with the key list and a FROZEN flag drawn on.
+
+    Never draws on frame_bgr itself: that frame also goes to the virtual
+    camera and Syphon, which must not see the overlay.
+    """
+    img = frame_bgr.copy()
+    scale = img.shape[0] / 720 * 0.55
+    line = max(1, round(28 * img.shape[0] / 720))
+    if show_keys:
+        for i, s in enumerate(KEY_HELP):
+            _text(img, s, (line // 2, line * (i + 1)), scale)
+    if frozen:
+        s = "FROZEN (S)"
+        (tw, _), _ = cv2.getTextSize(s, cv2.FONT_HERSHEY_SIMPLEX, scale * 1.6, 2)
+        org = (img.shape[1] - tw - line // 2, line + line // 2)
+        cv2.putText(img, s, org, cv2.FONT_HERSHEY_SIMPLEX, scale * 1.6, (0, 0, 0), 6, cv2.LINE_AA)
+        cv2.putText(img, s, org, cv2.FONT_HERSHEY_SIMPLEX, scale * 1.6, (0, 0, 255), 2, cv2.LINE_AA)
+    return img
 
 
 class Preview:
     def __init__(self, title: str = "obs-lsd"):
         self.title = title
+        self.show_keys = True
+        self.mouse = MouseState()
         cv2.namedWindow(title, cv2.WINDOW_NORMAL)
+        cv2.setMouseCallback(title, self.mouse.on_mouse)
 
-    def show(self, frame_bgr: np.ndarray) -> str | None:
-        cv2.imshow(self.title, frame_bgr)
+    def show(self, frame_bgr: np.ndarray, frozen: bool = False):
+        """Show a frame; return a key's action, ("place"|"fit", x, y) for a click, or None."""
+        cv2.imshow(self.title, draw_overlay(frame_bgr, frozen, self.show_keys))
         k = cv2.waitKey(1) & 0xFF
-        return KEYS.get(k)
+        if k == HELP_KEY:
+            self.show_keys = not self.show_keys
+            return None
+        action = KEYS.get(k)
+        if action is None:
+            # the preview shows the output frame 1:1, so window clicks are
+            # output pixels (OpenCV maps a resized window back to image pixels)
+            click = self.mouse.take()
+            if click is not None:
+                return click
+        return action
 
     def close(self) -> None:
         cv2.destroyWindow(self.title)

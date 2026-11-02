@@ -44,6 +44,13 @@ from obs_lsd.pipeline import Pipeline, PipelineConfig
     show_default=True,
     help="Gentle drift of the head about the centre, as a fraction of frame height; 0 disables",
 )
+@click.option(
+    "--glide",
+    default=0.3,
+    show_default=True,
+    help="Seconds for the head to get most (95%) of the way to a new spot after "
+    "a click or w/a/s/d; } and { change it while running",
+)
 @click.option("--no-vcam", is_flag=True, help="Do not open the virtual camera")
 @click.option("--no-preview", is_flag=True, help="No preview window")
 @click.option(
@@ -83,6 +90,7 @@ def cli(
     seg_thread,
     halo_thread,
     float_amp,
+    glide,
     no_vcam,
     no_preview,
     syphon,
@@ -120,6 +128,8 @@ def cli(
         head_frac=head_frac,
         halo=halo,
         float_amp=float_amp,
+        # 95% of the way takes three time constants of the exponential ease
+        move_tau=max(0.0, glide) / 3,
         seg_lag=1 if seg_thread else 0,
         halo_lag=1 if halo_thread else 0,
     )
@@ -205,7 +215,7 @@ def run(
                 if sink:
                     sink.write(out)
                 if preview:
-                    action = preview.show(out)
+                    action = preview.show(out, frozen=pipe.frozen)
                     if action == "quit":
                         break
                     _apply_action(action, pipe)
@@ -241,8 +251,26 @@ def run(
                 cleanup()
 
 
-def _apply_action(action: str | None, pipe: Pipeline) -> None:
+_MOVES = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
+
+
+def _apply_action(action: str | tuple | None, pipe: Pipeline) -> None:
     if action is None:
+        return
+    if isinstance(action, tuple):
+        kind, x, y = action
+        (pipe.place_fit if kind == "fit" else pipe.place)(x, y)
+        return
+    if action in _MOVES:
+        pipe.nudge(*_MOVES[action])
+        return
+    if action == "centre":
+        pipe.recentre()
+        return
+    if action in ("glide+", "glide-"):
+        tau = pipe.cfg.move_tau * (1 / 1.5 if action == "glide+" else 1.5)
+        pipe.cfg.move_tau = min(3.0, max(0.01, tau))
+        click.echo(f"glide={pipe.cfg.move_tau * 3:.2f}s", err=True)
         return
     p = pipe.halo.p
     if action == "size+":
@@ -259,8 +287,12 @@ def _apply_action(action: str | None, pipe: Pipeline) -> None:
         p.reach /= 1.15
     elif action == "freeze":
         pipe.frozen = not pipe.frozen
+        click.echo("frozen" if pipe.frozen else "unfrozen", err=True)
     elif action == "print":
-        click.echo(f"head_frac={pipe.tracker.target_frac:.2f} {p}", err=True)
+        click.echo(
+            f"head_frac={pipe.tracker.target_frac:.2f} glide={pipe.cfg.move_tau * 3:.2f}s {p}",
+            err=True,
+        )
 
 
 if __name__ == "__main__":

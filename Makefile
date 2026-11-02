@@ -1,4 +1,4 @@
-.PHONY: help venv install-dev test lint format models smoke run clean baseline eval judge-smoke evolve bench
+.PHONY: help venv install-dev test lint format models smoke run obs clean baseline eval judge-smoke evolve bench
 .DEFAULT_GOAL := help
 UV := uv
 MODELS := src/obs_lsd/models
@@ -46,6 +46,10 @@ smoke: models testdata ## End-to-end headless run on the still portrait
 
 run: models ## Run live with preview + virtual camera
 	$(UV) run obs-lsd
+
+obs: models ## Run live into OBS via Syphon (preview, no virtual camera); ARGS=... for more options
+	$(UV) pip install -q -e '.[syphon]'
+	$(UV) run obs-lsd --syphon --no-vcam $(ARGS)
 
 clean: ## Remove caches
 	\rm -rf .pytest_cache .ruff_cache dist build

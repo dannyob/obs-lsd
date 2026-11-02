@@ -263,3 +263,72 @@ def test_syphon_missing_is_a_clean_error(tmp_path, monkeypatch):
     )
     assert r.exit_code == 1
     assert "syphon-python" in r.output
+
+
+def test_movement_actions_drive_the_pipeline():
+    from obs_lsd.cli import _apply_action
+
+    class Pipe:
+        def __init__(self):
+            self.calls = []
+
+        def nudge(self, dx, dy):
+            self.calls.append(("nudge", dx, dy))
+
+        def place(self, x, y):
+            self.calls.append(("place", x, y))
+
+        def recentre(self):
+            self.calls.append(("recentre",))
+
+        def place_fit(self, x, y):
+            self.calls.append(("place_fit", x, y))
+
+    p = Pipe()
+    for a in ("up", "left", "down", "right", "centre"):
+        _apply_action(a, p)
+    _apply_action(("place", 12, 34), p)
+    _apply_action(("fit", 5, 6), p)
+    assert p.calls == [
+        ("nudge", 0, -1),
+        ("nudge", -1, 0),
+        ("nudge", 0, 1),
+        ("nudge", 1, 0),
+        ("recentre",),
+        ("place", 12, 34),
+        ("place_fit", 5, 6),
+    ]
+
+
+def test_glide_option_sets_the_easing(still_png, tmp_path, monkeypatch):
+    import obs_lsd.cli as climod
+
+    seen = {}
+
+    class P(_FakePipeline):
+        def __init__(self, cfg, segmenter=None):
+            super().__init__(cfg)
+            seen["cfg"] = cfg
+
+    monkeypatch.setattr(climod, "Pipeline", P)
+    args = _headless_args(still_png, tmp_path / "o.png", ["--seconds", "0.05", "--glide", "0.9"])
+    r = CliRunner().invoke(cli, args)
+    assert r.exit_code == 0, r.output
+    assert seen["cfg"].move_tau == pytest.approx(0.3)
+
+
+def test_glide_keys_slow_down_and_speed_up():
+    from types import SimpleNamespace
+
+    from obs_lsd.cli import _apply_action
+    from obs_lsd.pipeline import PipelineConfig
+
+    p = SimpleNamespace(cfg=PipelineConfig(move_tau=0.1))
+    _apply_action("glide-", p)
+    assert p.cfg.move_tau > 0.1
+    _apply_action("glide+", p)
+    _apply_action("glide+", p)
+    assert p.cfg.move_tau < 0.1
+    for _ in range(100):
+        _apply_action("glide+", p)
+    assert p.cfg.move_tau > 0  # never instant or negative
