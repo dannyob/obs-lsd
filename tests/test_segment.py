@@ -9,6 +9,7 @@ from obs_lsd.segment import (
     HeadSegmenter,
     ModelsMissing,
     chin_halfplane,
+    face_region,
     head_from_masks,
     mask_box,
 )
@@ -220,5 +221,44 @@ def test_segmenter_reopen_zero_never_reopens(monkeypatch):
         for i in range(6):
             seg.mask(img, i * 33)
         assert seg.reopens == 0 and seg.opens == 1
+    finally:
+        seg.close()
+
+
+def test_accessories_count_as_head_only_near_the_face():
+    # glasses come back from the segmenter as "others", not face; without
+    # them the mask has a wobbling hole round the frames and the halo spill
+    # flickers along it
+    hair = np.zeros((10, 10), np.float32)
+    face = np.zeros((10, 10), np.float32)
+    face[2:8, 2:8] = 1
+    face[4, 3:7] = 0  # the glasses
+    others = np.zeros((10, 10), np.float32)
+    others[4, 3:7] = 1
+    others[9, 0] = 1  # a mug down in the corner
+    region = np.zeros((10, 10), np.float32)
+    region[1:9, 1:9] = 1
+    hp = np.ones((10, 10), np.float32)
+    m = head_from_masks(hair, face, hp, feather=0, others=others, others_region=region)
+    assert (m[4, 3:7] == 1.0).all()
+    assert m[9, 0] == 0.0
+
+
+def test_face_region_covers_the_landmarks_with_a_margin():
+    pts = np.array([[40, 40], [60, 40], [60, 60], [40, 60]], np.float32)
+    r = face_region((100, 100), pts, grow=1.5)
+    assert r.dtype == np.float32
+    assert r[50, 50] == 1.0
+    assert r[50, 36] == 1.0 and r[50, 64] == 1.0  # grown 1.5x about the centre (35..65)
+    assert r[50, 25] == 0.0 and r[10, 10] == 0.0
+
+
+@pytest.mark.skipif(not have_models, reason="models not downloaded")
+def test_portrait_mask_still_covers_face_not_neck_with_accessories():
+    seg = HeadSegmenter()
+    try:
+        img = cv2.imread(str(PORTRAIT))
+        hm = seg.mask(img, 0)
+        assert hm is not None and hm.mask.max() > 0.9
     finally:
         seg.close()

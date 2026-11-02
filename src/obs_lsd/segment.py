@@ -16,10 +16,8 @@ from obs_lsd.track import HeadBox
 
 SEG_MODEL = "selfie_multiclass_256x256.tflite"
 FL_MODEL = "face_landmarker.task"
-HAIR, FACE = (
-    1,
-    3,
-)  # confidence_masks indices (labels: background,hair,body-skin,face-skin,clothes,others)
+# confidence_masks indices (labels: background,hair,body-skin,face-skin,clothes,others)
+HAIR, FACE, OTHERS = 1, 3, 5
 CHIN_LM, LEFT_EYE_LM, RIGHT_EYE_LM = 152, 33, 263
 
 
@@ -58,8 +56,26 @@ def chin_halfplane(shape, chin_xy, roll_deg: float, margin_px: float) -> np.ndar
     return hp
 
 
-def head_from_masks(hair, face, halfplane, feather: int) -> np.ndarray:
+def face_region(shape, points: np.ndarray, grow: float = 1.3) -> np.ndarray:
+    """1.0 inside the convex hull of points, grown by grow about its centre."""
+    c = points.mean(axis=0)
+    hull = cv2.convexHull(((points - c) * grow + c).astype(np.float32))
+    r = np.zeros(shape, np.float32)
+    cv2.fillConvexPoly(r, np.rint(hull).astype(np.int32), 1.0)
+    return r
+
+
+def head_from_masks(
+    hair, face, halfplane, feather: int, others=None, others_region=None
+) -> np.ndarray:
     m = np.maximum(hair, face).astype(np.float32, copy=False)
+    if others is not None:
+        # Accessories: the segmenter labels glasses (and earrings, headphones)
+        # "others", not face, which leaves a hole round the frames whose
+        # edge wobbles every frame. Count them as head, but only near the
+        # face, so a mug or a hand elsewhere in the frame stays out.
+        acc = others * others_region if others_region is not None else others
+        np.maximum(m, acc, out=m)
     m *= halfplane
     # MediaPipe's confidence masks rarely reach 1.0 even on the middle of a
     # face, and leave a low wash over the background; stretch [0.15,0.85] to
@@ -95,6 +111,7 @@ class HeadSegmenter:
         delegate: str = "gpu",
         infer_width: int = 320,
         reopen_every: int = 1000,
+        accessory_grow: float = 1.3,
     ):
         if delegate not in ("gpu", "cpu"):
             raise ValueError(f"delegate must be 'gpu' or 'cpu', not {delegate!r}")
@@ -119,6 +136,10 @@ class HeadSegmenter:
         self.hold_frames = hold_frames
         self.feather = feather
         self.chin_margin = chin_margin
+        # Accessories ("others": glasses and the like) count as head inside
+        # the face landmarks' hull grown by this factor; the arms of glasses
+        # reach past the landmarks towards the ears.
+        self.accessory_grow = accessory_grow
         # Frames wider than this are shrunk before inference: the models work
         # at 256x256 and 192x192 inside, and MediaPipe hands its confidence
         # masks back at the input size. 0 disables.
@@ -221,13 +242,16 @@ class HeadSegmenter:
         cm = seg.confidence_masks
         hair = cm[HAIR].numpy_view()[..., 0]
         face = cm[FACE].numpy_view()[..., 0]
+        others = cm[OTHERS].numpy_view()[..., 0]
         # Union, chin cut and box at the inference size, where they are nearly
         # free; one resize up, then the feather at camera size so its width
         # in pixels does not depend on infer_width.
         chin = (lm[CHIN_LM].x * sw, lm[CHIN_LM].y * sh)
         face_h = abs(chin[1] - min(le.y, re.y) * sh) * 2.0
         hp = chin_halfplane((sh, sw), chin, roll, self.chin_margin * face_h)
-        m = head_from_masks(hair, face, hp, feather=0)
+        pts = np.array([(p.x * sw, p.y * sh) for p in lm], np.float32)
+        region = face_region((sh, sw), pts, grow=self.accessory_grow)
+        m = head_from_masks(hair, face, hp, feather=0, others=others, others_region=region)
         scale = w / sw
         box = mask_box(m, min_pixels=max(1, round(50 / (scale * scale))))
         if box is None:
