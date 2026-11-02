@@ -332,3 +332,20 @@ def test_glide_keys_slow_down_and_speed_up():
     for _ in range(100):
         _apply_action("glide+", p)
     assert p.cfg.move_tau > 0  # never instant or negative
+
+
+def test_default_output_is_1080p(still_png, tmp_path, monkeypatch):
+    import obs_lsd.cli as climod
+
+    seen = {}
+
+    class P(_FakePipeline):
+        def __init__(self, cfg, segmenter=None):
+            super().__init__(cfg)
+            seen["cfg"] = cfg
+
+    monkeypatch.setattr(climod, "Pipeline", P)
+    args = ["--input", str(still_png), "--seconds", "0.05", "--no-vcam", "--no-preview"]
+    r = CliRunner().invoke(cli, args)
+    assert r.exit_code == 0, r.output
+    assert (seen["cfg"].width, seen["cfg"].height) == (1920, 1080)

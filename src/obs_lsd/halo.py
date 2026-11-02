@@ -48,6 +48,11 @@ class HaloParams:
     spill_gain: float = 1.0  # halo colour wrapped onto the head edge
     spill_width: float = 30.0  # px inward that the wrap reaches
     scale: float = 0.5
+    # reach, rim_width, spill_width, speed and hue_twist are in pixels of an
+    # output this many rows tall; a taller output scales them up, so 1080p
+    # gets the same halo as 720p, not a relatively smaller one. The halo is
+    # also rendered at scale * ref_height rows whatever the output size.
+    ref_height: float = 720.0
 
 
 class HaloRenderer:
@@ -72,8 +77,12 @@ class HaloRenderer:
 
     def render(self, mask: np.ndarray, t: float) -> np.ndarray:
         H, W = mask.shape
-        s = self.p.scale
-        h, w = max(1, int(H * s)), max(1, int(W * s))
+        # Above ref_height, render at scale * ref_height rows whatever the
+        # output height H: the halo is soft, so a 1080p output costs no more
+        # than 720p. Smaller outputs keep the plain scale.
+        k = self.p.ref_height / H
+        s = self.p.scale * min(1.0, k)
+        h, w = max(1, round(H * s)), max(1, round(W * s))
         m = cv2.resize(mask, (w, h), interpolation=cv2.INTER_AREA) if s != 1.0 else mask
         if m.max() <= 0.0:
             return np.zeros((H, W, 3), np.float32)
@@ -85,9 +94,10 @@ class HaloRenderer:
             return np.zeros((H, W, 3), np.float32)
         cx, cy = mom["m10"] / mom["m00"], mom["m01"] / mom["m00"]
         outside = 1 - binary
-        # distance (in full-res px) from the head contour, outward
+        # distance from the head contour, outward, in ref_height pixels:
+        # render px -> output px (1/s) -> ref px (k)
         dist = cv2.distanceTransform(outside, cv2.DIST_L2, 3)
-        dist *= np.float32(1.0 / s)
+        dist *= np.float32(k / s)
         xx, yy = self._grid(h, w)
         theta = np.arctan2(yy - cy, xx - cx)  # -pi..pi
         # Everything below is a full half-res float32 pass; each is written in

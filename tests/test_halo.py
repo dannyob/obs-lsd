@@ -39,13 +39,15 @@ def test_render_deterministic_and_time_varying(ellipse_mask):
 
 
 def test_density_changes_the_ray_field(ellipse_mask):
-    a = HaloRenderer(HaloParams(density=48), seed=5).render(ellipse_mask, 0.4)
-    b = HaloRenderer(HaloParams(density=200), seed=5).render(ellipse_mask, 0.4)
+    ref = ellipse_mask.shape[0]  # halo sizes in this mask's own pixels
+    a = HaloRenderer(HaloParams(density=48, ref_height=ref), seed=5).render(ellipse_mask, 0.4)
+    b = HaloRenderer(HaloParams(density=200, ref_height=ref), seed=5).render(ellipse_mask, 0.4)
     assert np.abs(a - b).mean() > 0.02
 
 
 def test_rotation_animates_when_everything_else_is_static(ellipse_mask):
-    static = {"speed": 0.0, "flicker": 0.0, "hue_speed": 0.0}
+    # halo sizes in this mask's own pixels
+    static = {"speed": 0.0, "flicker": 0.0, "hue_speed": 0.0, "ref_height": ellipse_mask.shape[0]}
     spun = HaloRenderer(HaloParams(rotate=0.25, **static), seed=7)
     assert np.abs(spun.render(ellipse_mask, 0.0) - spun.render(ellipse_mask, 1.0)).mean() > 0.02
     still = HaloRenderer(HaloParams(rotate=0.0, **static), seed=7)
@@ -85,3 +87,33 @@ def test_no_jump_at_flicker_slice_boundary(ellipse_mask):
         r.render(ellipse_mask, 0.25 - dt / 2) - r.render(ellipse_mask, 0.25 + dt / 2)
     ).mean()
     assert across < 2.0 * inside + 1e-4
+
+
+def _head(h, w):
+    import cv2
+
+    m = np.zeros((h, w), np.float32)
+    cv2.ellipse(m, (w // 2, h // 2), (int(h * 0.2), int(h * 0.27)), 0, 0, 360, 1.0, -1)
+    return m
+
+
+def test_halo_looks_the_same_at_1080p_as_at_720p():
+    # reach, rim, speed and twist are in 720p pixels, so a bigger output gets
+    # the same halo, not a relatively smaller one
+    import cv2
+
+    r = HaloRenderer(HaloParams())
+    a = r.render(_head(720, 1280), 1.0)
+    b = r.render(_head(1080, 1920), 1.0)
+    b_small = cv2.resize(b, (1280, 720), interpolation=cv2.INTER_AREA)
+    assert np.abs(a - b_small).mean() < 0.02
+    # halo still reaches well out at 1080p: compare brightness at the same
+    # relative spot outside the head
+    assert b[540, 1920 // 2 + int(1080 * 0.2) + 150].max() > 0.05
+
+
+def test_720p_render_is_unchanged_by_reference_height():
+    r1 = HaloRenderer(HaloParams())
+    r2 = HaloRenderer(HaloParams(ref_height=720.0))
+    m = _head(720, 1280)
+    assert np.array_equal(r1.render(m, 0.5), r2.render(m, 0.5))

@@ -202,7 +202,7 @@ class Pipeline:
             halo,
             halo_gain=gain,
             spill_gain=self.halo.p.spill_gain,
-            spill_width=self.halo.p.spill_width,
+            spill_width=self.halo.p.spill_width * self.cfg.height / self.halo.p.ref_height,
         )
         tm["compose"] = (time.perf_counter() - t3) * 1000
         tm["total"] = (time.perf_counter() - t0) * 1000

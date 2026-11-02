@@ -105,9 +105,11 @@ and writes `/tmp/obs-lsd-smoke.png`.
 - `--halo-reach`, `--halo-density`, `--halo-speed`, `--halo-rotate`,
   `--halo-flicker`, `--halo-hue-speed`, `--halo-spill`, `--halo-scale` tune
   the halo. Defaults and what each one does are on `HaloParams` in
-  `src/obs_lsd/halo.py`.
-- `--width`, `--height`, `--fps` set the output format (default 1280x720
-  at 30). `--seconds N` stops after N seconds; `--dump-frame x.png` saves
+  `src/obs_lsd/halo.py`. Reach and the other sizes are pixels of a 720p
+  frame and scale with the output, so the halo looks the same at any size.
+- `--width`, `--height`, `--fps` set the output format (default 1920x1080
+  at 30; the camera is asked for the same size). `--width 1280 --height 720`
+  is lighter if a slower Mac cannot keep up. `--seconds N` stops after N seconds; `--dump-frame x.png` saves
   the last frame on exit.
 - `--syphon` publishes frames as a Syphon server named `obs-lsd` for an OBS
   Syphon Client source. Needs the `syphon` extra.

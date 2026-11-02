@@ -17,8 +17,8 @@ from obs_lsd.pipeline import Pipeline, PipelineConfig
 @click.option("--camera", default=None, help="Camera index or name substring (default 0)")
 @click.option("--input", "input_", default=None, help="Video/image file instead of a camera")
 @click.option("--list-cameras", "list_cams", is_flag=True, help="List cameras and exit")
-@click.option("--width", default=1280, show_default=True)
-@click.option("--height", default=720, show_default=True)
+@click.option("--width", default=1920, show_default=True)
+@click.option("--height", default=1080, show_default=True)
 @click.option("--fps", default=30.0, show_default=True)
 @click.option(
     "--head-frac", default=0.55, show_default=True, help="Head height as fraction of frame"
