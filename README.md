@@ -77,15 +77,18 @@ make obs            # installs the syphon extra, then runs obs-lsd --syphon --no
 make obs ARGS='--glide 0.6 --halo-reach 300'
 ```
 
-Then in OBS add a Syphon Client source and pick "python - obs-lsd". OBS
+Then in OBS add a Syphon Client source and pick "Python - obs-lsd". The
+obs-lsd preview window still opens, and its keys and mouse controls drive
+what OBS sees. OBS
 hides its own virtual camera from its source list, so this is the only
 way to get obs-lsd into OBS. `--syphon` works alongside the virtual
 camera too; drop `--no-vcam` when OBS is not running and both get frames.
 
 When the segmenter loses your face (you turn away, walk off, the light
 goes), the last cutout is held, fades to black over a second, and comes
-back when you do. The cutout is hair plus face skin, so a hat is not part
-of it, and it tracks one face at a time.
+back when you do. The cutout is hair and face skin plus glasses and other
+accessories close to the face; a hat is mostly not part of it, and it
+tracks one face at a time.
 
 No camera handy? `make smoke` runs the whole pipeline on a still portrait
 and writes `/tmp/obs-lsd-smoke.png`.
@@ -102,6 +105,9 @@ and writes `/tmp/obs-lsd-smoke.png`.
   same video every time.
 - `--head-frac 0.55` sets how tall the head is as a fraction of the frame,
   and `--float 0.03` how far it drifts about the centre (0 to pin it).
+- `--glide 0.3` is how many seconds the head takes to get most of the way
+  to where you click or steer it (0 jumps there); `}` and `{` change it
+  while running.
 - `--halo-reach`, `--halo-density`, `--halo-speed`, `--halo-rotate`,
   `--halo-flicker`, `--halo-hue-speed`, `--halo-spill`, `--halo-scale` tune
   the halo. Defaults and what each one does are on `HaloParams` in
@@ -111,8 +117,8 @@ and writes `/tmp/obs-lsd-smoke.png`.
   at 30; the camera is asked for the same size). `--width 1920 --height 1080`
   works and the halo scales to match, but live with the preview and Syphon
   it can overrun the 33ms frame budget on an M5 Max and drop frames; it is
-  fine for `--input` renders. `--seconds N` stops after N seconds; `--dump-frame x.png` saves
-  the last frame on exit.
+  fine for `--input` renders. `--seconds N` stops after N seconds;
+  `--dump-frame x.png` saves the last frame on exit.
 - `--syphon` publishes frames as a Syphon server named `obs-lsd` for an OBS
   Syphon Client source. Needs the `syphon` extra.
 - `--no-seg-thread` segments on the frame loop instead of a worker thread:
