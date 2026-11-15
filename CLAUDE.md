@@ -82,3 +82,14 @@ OBS cannot capture its own virtual camera, so `--syphon` (`SyphonSink` in
 `output.py`) is how obs-lsd gets into an OBS scene. The sink pumps the
 Cocoa run loop every frame; without that the server is never announced
 and no client lists it.
+
+Live use, from the Terminal Values launch talk (November 2026): Syphon
+at 720p30 into a 1920x1080 OBS canvas, with the source set to Screen blend
+so the black falls away, fitted to the whole canvas and not cropped. 1080p
+output dropped frames live, which is why 720p is the default. Treat black
+frames as part of the interface: with Screen blend, an empty frame makes
+the head vanish from the scene, so don't fill a lost-face frame with halo
+or a placeholder. Before changing output size, the background colour or
+the Syphon server name, check with Danny: OBS scenes outside this repo
+depend on them. Those scenes are in `~/Private/showtime`
+(`bin/setup_scenes.py`).

@@ -84,6 +84,25 @@ hides its own virtual camera from its source list, so this is the only
 way to get obs-lsd into OBS. `--syphon` works alongside the virtual
 camera too; drop `--no-vcam` when OBS is not running and both get frames.
 
+Some things that help once it is in a scene:
+
+- Set the Syphon Client's blend mode to Screen (right-click the source,
+  Blend Mode). The background is pure black, so Screen drops it and leaves
+  the head and halo floating over whatever is underneath: slides, a web
+  page, a keyed camera. With the normal blend mode you get a black box.
+- Fit the source to the whole canvas rather than cropping it. The halo
+  reaches the edges of the frame and does some of its best work there.
+  OBS scales the 720p feed up to a 1080p canvas without trouble.
+- One Syphon Client source can go into as many scenes as you like
+  (add it as an existing source), so an intro scene and a closing slide
+  can share the same head.
+- When nobody is in front of the camera the frame is all black, so under
+  Screen the layer simply disappears. Stepping into the shot brings the
+  head back, which works as a cue.
+- Restarting obs-lsd announces a new Syphon server. OBS found it again
+  by name without any help each time we tried, but if a source stays
+  black, open its properties and pick "Python - obs-lsd" again.
+
 When the segmenter loses your face (you turn away, walk off, the light
 goes), the last cutout is held, fades to black over a second, and comes
 back when you do. The cutout is hair and face skin plus glasses and other
